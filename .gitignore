@@ -1,0 +1,17 @@
+.DS_Store
+
+# Personal API credentials and signing team
+Config/Secrets.xcconfig
+
+# Generated from project.yml by XcodeGen
+Hush.xcodeproj/
+App/Info.plist
+App/Hush.entitlements
+
+# Build products and editor state
+.build/
+.swiftpm/
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate

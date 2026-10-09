@@ -1,0 +1,33 @@
+{
+  "originHash" : "b8b22a5ccb8ee166bb2eb582814001cdb6ceee13551e454591f91bee50ee942a",
+  "pins" : [
+    {
+      "identity" : "lottie-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/airbnb/lottie-spm",
+      "state" : {
+        "revision" : "0aff16288f8dc1e3dab35cbf5cf45979673fd3df",
+        "version" : "4.6.1"
+      }
+    },
+    {
+      "identity" : "tdlibframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Swiftgram/TDLibFramework",
+      "state" : {
+        "revision" : "9ebb0e55a3607f10f24b3fc3e663bd38e7743ad2",
+        "version" : "1.8.67-42e6a525"
+      }
+    },
+    {
+      "identity" : "tdlibkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Swiftgram/TDLibKit",
+      "state" : {
+        "revision" : "9ae160c32597e7837e96e1453260add08629f760",
+        "version" : "1.5.2-tdlib-1.8.67-42e6a525"
+      }
+    }
+  ],
+  "version" : 3
+}

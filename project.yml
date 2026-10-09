@@ -1,0 +1,57 @@
+# XcodeGen spec. Run `xcodegen generate` after editing; Hush.xcodeproj is generated and git-ignored.
+name: Hush
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+packages:
+  HushCore:
+    path: Packages/HushCore
+targets:
+  Hush:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: HushCore
+        product: HushCore
+      - package: HushCore
+        product: HushUI
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Hush
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.social-networking
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSMicrophoneUsageDescription: Hush uses the microphone to record voice messages.
+        # Filled from Config/Secrets.xcconfig, read by TDConfiguration.load().
+        HushTelegramAPIId: $(HUSH_API_ID)
+        HushTelegramAPIHash: $(HUSH_API_HASH)
+    entitlements:
+      path: App/Hush.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.downloads.read-write: true
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+schemes:
+  Hush:
+    build:
+      targets:
+        Hush: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: HushCore/HushCoreTests
