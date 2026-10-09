@@ -9,13 +9,11 @@ struct MessageRow: View {
     let isLastInGroup: Bool
     let isGroup: Bool
     let isRead: Bool
+    /// Whether this is your latest message with nothing after it, which shows "Delivered" or "Read".
+    let isLatest: Bool
     let conversation: ConversationModel
     let files: FileStore
-    @State private var isHovering = false
     @State private var isPickingReaction = false
-
-    /// In groups, other people's messages carry their name and picture.
-    private var showsSender: Bool { isGroup && !message.isOutgoing }
 
     var body: some View {
         if case .service(let text) = message.body {
@@ -26,72 +24,53 @@ struct MessageRow: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
         } else {
-            HStack(alignment: .bottom, spacing: 8) {
-                if message.isOutgoing { Spacer(minLength: 80) }
-                if showsSender {
-                    SenderAvatarSlot(sender: message.sender, showsAvatar: isLastInGroup, files: files)
-                }
-                // The react button hugs the bubble, on the side facing the middle of the window.
-                HStack(alignment: .center, spacing: 6) {
-                    if message.isOutgoing { reactButton }
-                    VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-                        MessageBubble(
-                            message: message,
-                            showsSenderName: showsSender && isFirstInGroup,
-                            isRead: isRead,
-                            files: files,
-                            onOpen: { conversation.quickLookURL = $0 },
-                            onOpenMedia: { conversation.openViewer(message) },
-                            voice: conversation.voice,
-                            onPlayVoice: { conversation.playVoiceNote(message, url: $0) }
-                        )
-                        .contextMenu { menu }
-                        if !message.reactions.isEmpty {
-                            ReactionChips(reactions: message.reactions) { conversation.toggleReaction($0, on: message) }
-                        }
-                    }
-                    if !message.isOutgoing { reactButton }
-                }
-                .frame(maxWidth: 600, alignment: message.isOutgoing ? .trailing : .leading)
-                if !message.isOutgoing { Spacer(minLength: 80) }
+            MessageChrome(
+                lead: message,
+                isFirstInGroup: isFirstInGroup,
+                isLastInGroup: isLastInGroup,
+                isGroup: isGroup,
+                isEdited: message.isEdited,
+                delivery: DeliveryStatus.State(for: [message], isRead: isRead, isLatest: isLatest),
+                reactions: message.reactions,
+                canReact: !conversation.reactionChoices.isEmpty,
+                files: files,
+                onTapback: { isPickingReaction = true }
+            ) {
+                MessageBubble(
+                    message: message,
+                    hasTail: isLastInGroup,
+                    files: files,
+                    onOpen: { conversation.quickLookURL = $0 },
+                    onOpenMedia: { conversation.openViewer(message) },
+                    voice: conversation.voice,
+                    onPlayVoice: { conversation.playVoiceNote(message, url: $0) }
+                )
+                .help(message.date.formatted(date: .abbreviated, time: .shortened))
+                .contextMenu { menu }
+                .popover(isPresented: $isPickingReaction) { picker }
             }
-            .padding(.top, isFirstInGroup ? 8 : 2)
-            .onHover { isHovering = $0 }
         }
     }
 
-    /// Appears beside the bubble on hover; always takes its space so nothing shifts.
-    private var reactButton: some View {
-        Button("React", systemImage: "face.smiling") { isPickingReaction = true }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .opacity(isHovering || isPickingReaction ? 1 : 0)
-            .popover(isPresented: $isPickingReaction) {
-                ReactionPicker(
-                    choices: conversation.reactionChoices,
-                    chosen: Set(message.reactions.filter(\.isChosen).compactMap {
-                        if case .emoji(let emoji) = $0.kind { return emoji }
-                        return nil
-                    }),
-                    onPick: { emoji in
-                        isPickingReaction = false
-                        conversation.toggleReaction(emoji, on: message)
-                    }
-                )
+    private var picker: some View {
+        ReactionPicker(
+            choices: conversation.reactionChoices,
+            chosen: Set(message.reactions.filter(\.isChosen).compactMap {
+                if case .emoji(let emoji) = $0.kind { return emoji }
+                return nil
+            }),
+            onPick: { emoji in
+                isPickingReaction = false
+                conversation.toggleReaction(emoji, on: message)
             }
+        )
     }
 
     @ViewBuilder private var menu: some View {
-        Button("Reply") { conversation.reply(to: message) }
-        let choices = conversation.reactionChoices
-        if !choices.isEmpty {
-            Menu("React") {
-                ForEach(choices.prefix(16), id: \.self) { emoji in
-                    Button(emoji) { conversation.toggleReaction(emoji, on: message) }
-                }
-            }
+        if !conversation.reactionChoices.isEmpty {
+            Button("Tapback…") { isPickingReaction = true }
         }
+        Button("Reply") { conversation.reply(to: message) }
         if message.canEditText {
             Button("Edit") { conversation.startEditing(message) }
         }
@@ -122,10 +101,120 @@ struct MessageRow: View {
     }
 }
 
+extension DeliveryStatus.State {
+    /// What shows under a message or album: a failure always, otherwise "Delivered" or "Read"
+    /// under your latest message only.
+    init?(for messages: [MessageModel], isRead: Bool, isLatest: Bool) {
+        guard messages.first?.isOutgoing == true else { return nil }
+        for message in messages {
+            if case .failed(let reason) = message.status {
+                self = .failed(reason)
+                return
+            }
+        }
+        guard isLatest else { return nil }
+        self = messages.contains { $0.status == .sending } ? .sending : (isRead ? .read : .delivered)
+    }
+}
+
+/// Everything around a bubble, laid out as in Messages: in groups, the sender's name above the
+/// first bubble and their picture beside the last; a Tapback badge on the top corner; "Edited"
+/// and the delivery status underneath. Hovering shows a button to react.
+struct MessageChrome<Bubble: View>: View {
+    let lead: MessageModel
+    let isFirstInGroup: Bool
+    let isLastInGroup: Bool
+    let isGroup: Bool
+    let isEdited: Bool
+    let delivery: DeliveryStatus.State?
+    let reactions: [Reaction]
+    let canReact: Bool
+    let files: FileStore
+    /// Opens the reaction picker.
+    let onTapback: () -> Void
+    @ViewBuilder let bubble: Bubble
+    @State private var isHovering = false
+
+    private static var avatarSlot: CGFloat { SenderAvatarSlot.size + 8 }
+
+    private var isOutgoing: Bool { lead.isOutgoing }
+    private var showsSender: Bool { isGroup && !isOutgoing }
+    /// Lines up captions under the bubble with its body, past the avatar and the tail.
+    private var captionInset: CGFloat { (showsSender ? Self.avatarSlot : 0) + MessagesStyle.tailWidth + 6 }
+
+    var body: some View {
+        VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 3) {
+            if showsSender && isFirstInGroup {
+                Text(lead.sender.name)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, captionInset + 6)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                if showsSender {
+                    SenderAvatarSlot(sender: lead.sender, showsAvatar: isLastInGroup, files: files)
+                }
+                if case .failed = delivery {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                        .padding(.bottom, 6)
+                }
+                // The react button sits on the side facing the middle of the window.
+                HStack(spacing: 6) {
+                    if isOutgoing { reactButton }
+                    bubble
+                        .overlay(alignment: isOutgoing ? .topLeading : .topTrailing) {
+                            if !reactions.isEmpty {
+                                // On the bubble's top corner, mostly above it, as Tapbacks sit.
+                                TapbackBadge(reactions: reactions, onTap: onTapback)
+                                    .fixedSize()
+                                    .offset(x: isOutgoing ? -14 : 14, y: -17)
+                            }
+                        }
+                    if !isOutgoing { reactButton }
+                }
+            }
+            .frame(maxWidth: MessagesStyle.maxBubbleWidth + (showsSender ? Self.avatarSlot : 0), alignment: isOutgoing ? .trailing : .leading)
+            if isEdited || delivery != nil {
+                HStack(spacing: 6) {
+                    if isEdited { Text("Edited") }
+                    if let delivery { DeliveryStatus(state: delivery) }
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(isOutgoing ? .trailing : .leading, captionInset)
+            }
+        }
+        // Bubbles never reach the far side of the window.
+        .padding(isOutgoing ? .leading : .trailing, 60)
+        .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
+        .padding(.top, (isFirstInGroup ? 10 : 2) + (reactions.isEmpty ? 0 : 14))
+        .onHover { isHovering = $0 }
+    }
+
+    /// Shown while the pointer is over the message; always takes its space, so nothing shifts.
+    @ViewBuilder private var reactButton: some View {
+        if canReact {
+            Button("React", systemImage: "face.smiling", action: onTapback)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .help("React")
+                .opacity(isHovering ? 1 : 0)
+        }
+    }
+}
+
+/// A message's bubble: text, files and voice in a blue or grey bubble; photos and videos on their
+/// own with rounded corners, their caption in a bubble below; stickers bare.
 struct MessageBubble: View {
     let message: MessageModel
-    let showsSenderName: Bool
-    let isRead: Bool
+    /// The last bubble of a run gets a tail.
+    var hasTail = true
     let files: FileStore
     /// Opens a downloaded file in Quick Look.
     let onOpen: (URL) -> Void
@@ -136,98 +225,88 @@ struct MessageBubble: View {
     var onPlayVoice: (URL) -> Void = { _ in }
 
     private var isOutgoing: Bool { message.isOutgoing }
-
-    /// Stickers and round videos stand on their own, without a bubble.
-    private var isBare: Bool {
-        switch message.body {
-        case .sticker, .videoNote: true
-        default: false
-        }
-    }
-
-    /// Photos and videos nearly fill their bubble.
-    private var isVisualMedia: Bool {
-        switch message.body {
-        case .photo, .video: true
-        default: false
-        }
-    }
+    private var alignment: HorizontalAlignment { isOutgoing ? .trailing : .leading }
 
     var body: some View {
-        if isBare {
+        switch message.body {
+        case .sticker, .videoNote:
             bare
-        } else {
-            bubble
+        case .photo(let photo, let caption):
+            visualMedia(caption: caption) {
+                PhotoView(photo: photo, files: files, onOpen: onOpenMedia, cornerRadius: MessagesStyle.cornerRadius)
+            }
+        case .video(let video, let caption):
+            visualMedia(caption: caption) {
+                VideoView(video: video, files: files, onOpen: onOpenMedia, cornerRadius: MessagesStyle.cornerRadius)
+            }
+        default:
+            bubble(hasTail: hasTail) {
+                header
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
-    private var bubble: some View {
-        let inset: CGFloat = isVisualMedia ? 6 : 0
-        return BubbleLayout(spacing: 4) {
-            if showsSenderName {
-                Text(message.sender.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AccentPalette.color(for: message.sender.accentColorId))
-                    .padding(.horizontal, inset)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let forwardedFrom = message.forwardedFrom {
-                Text("Forwarded from \(forwardedFrom)")
-                    .font(.caption.italic())
-                    .opacity(0.75)
-                    .padding(.horizontal, inset)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let reply = message.reply {
-                ReplyQuote(reply: reply, isOutgoing: isOutgoing)
-                    .padding(.horizontal, inset)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            content
+    /// Text in the blue or grey bubble, with a tail if it ends a run.
+    private func bubble(hasTail: Bool, @ViewBuilder content: () -> some View) -> some View {
+        BubbleLayout(spacing: 4) { content() }
+            .bubblePadding(isOutgoing: isOutgoing)
+            .foregroundStyle(isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .background(MessagesStyle.bubbleColor(isOutgoing: isOutgoing), in: BubbleShape(isOutgoing: isOutgoing, hasTail: hasTail))
+    }
+
+    /// "Forwarded from" and the message replied to, at the top of the bubble.
+    @ViewBuilder private var header: some View {
+        if let forwardedFrom = message.forwardedFrom {
+            Text("Forwarded from \(forwardedFrom)")
+                .font(.caption.italic())
+                .opacity(0.75)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            footer
-                .padding(.horizontal, inset)
-                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, isVisualMedia ? 4 : 12)
-        .padding(.vertical, isVisualMedia ? 4 : 7)
-        .foregroundStyle(isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .background(
-            isOutgoing ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary.opacity(0.7)),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
+        if let reply = message.reply {
+            ReplyQuote(reply: reply, isOutgoing: isOutgoing)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var hasHeader: Bool { message.forwardedFrom != nil || message.reply != nil }
+
+    /// A photo or video stands on its own, as in Messages; its caption follows in a bubble.
+    private func visualMedia(caption: RichText, @ViewBuilder media: () -> some View) -> some View {
+        VStack(alignment: alignment, spacing: 2) {
+            if hasHeader {
+                bubble(hasTail: false) { header }
+            }
+            media()
+                .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
+            if !caption.isEmpty {
+                bubble(hasTail: hasTail) { richText(caption) }
+            }
+        }
     }
 
     private var bare: some View {
-        VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 4) {
+        VStack(alignment: alignment, spacing: 4) {
             if let reply = message.reply {
                 ReplyQuote(reply: reply, isOutgoing: false)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(MessagesStyle.incoming, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             content
-            footer
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(.quaternary.opacity(0.7), in: Capsule())
         }
+        .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
     }
 
     @ViewBuilder private var content: some View {
         switch message.body {
         case .text(let text):
             richText(text)
-        case .photo(let photo, let caption):
-            VStack(alignment: .leading, spacing: 6) {
-                PhotoView(photo: photo, files: files, onOpen: onOpenMedia)
-                mediaCaption(caption, width: MediaSize.fit(width: photo.image.width, height: photo.image.height).width)
-            }
-        case .video(let video, let caption):
-            VStack(alignment: .leading, spacing: 6) {
-                VideoView(video: video, files: files, onOpen: onOpenMedia)
-                mediaCaption(caption, width: MediaSize.fit(width: video.width, height: video.height).width)
-            }
+        case .photo(let photo, _):
+            PhotoView(photo: photo, files: files, onOpen: onOpenMedia, cornerRadius: MessagesStyle.cornerRadius)
+        case .video(let video, _):
+            VideoView(video: video, files: files, onOpen: onOpenMedia, cornerRadius: MessagesStyle.cornerRadius)
         case .videoNote(let note):
             VideoNoteView(note: note, files: files)
         case .sticker(let sticker):
@@ -259,47 +338,8 @@ struct MessageBubble: View {
         }
     }
 
-    /// A caption wraps to the width of the photo or video above it.
-    @ViewBuilder private func mediaCaption(_ text: RichText, width: CGFloat) -> some View {
-        if !text.isEmpty {
-            richText(text)
-                .padding(.horizontal, 6)
-                .frame(width: width, alignment: .leading)
-        }
-    }
-
     private func richText(_ text: RichText) -> some View {
         RichTextView(text: text, onAccent: isOutgoing)
-    }
-
-    private var footer: some View {
-        HStack(spacing: 4) {
-            if message.isEdited {
-                Text("edited")
-            }
-            Text(message.date.formatted(date: .omitted, time: .shortened))
-            if isOutgoing { statusIcon }
-        }
-        .font(.caption2)
-        .opacity(0.7)
-    }
-
-    @ViewBuilder private var statusIcon: some View {
-        switch message.status {
-        case .sending:
-            Image(systemName: "clock")
-        case .failed(let reason):
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-                .help("Not sent: \(reason)")
-        case .sent:
-            // One check when sent, two when read.
-            HStack(spacing: -6) {
-                Image(systemName: "checkmark")
-                if isRead { Image(systemName: "checkmark") }
-            }
-            .help(isRead ? "Read" : "Sent")
-        }
     }
 }
 
@@ -354,6 +394,8 @@ struct RichTextView: View {
 
 /// In groups: the sender's picture beside their last message, and matching space beside the others.
 struct SenderAvatarSlot: View {
+    static let size: CGFloat = 28
+
     let sender: MessageModel.Sender
     let showsAvatar: Bool
     let files: FileStore
@@ -365,10 +407,10 @@ struct SenderAvatarSlot: View {
                 accentColorId: sender.accentColorId,
                 photoFileId: sender.photoFileId,
                 files: files,
-                size: 28
+                size: Self.size
             )
         } else {
-            Color.clear.frame(width: 28, height: 1)
+            Color.clear.frame(width: Self.size, height: 1)
         }
     }
 }

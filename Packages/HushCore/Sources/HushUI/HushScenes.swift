@@ -69,9 +69,8 @@ struct HushCommands: Commands {
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
             .disabled(!isReady)
-            Button("Choose Chats…") { window.isChoosingChats = true }
-                .keyboardShortcut("g", modifiers: [.command, .shift])
-                .disabled(!isReady)
+            // Choosing which groups, channels and bots to show lives in Settings only, a step
+            // away, so adding one is a deliberate choice.
         }
     }
 }

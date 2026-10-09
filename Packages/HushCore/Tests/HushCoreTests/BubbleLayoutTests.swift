@@ -18,7 +18,7 @@ struct BubbleLayoutTests {
             isEdited: false,
             status: .sent
         )
-        let renderer = ImageRenderer(content: MessageBubble(message: message, showsSenderName: false, isRead: true, files: FileStore(), onOpen: { _ in }))
+        let renderer = ImageRenderer(content: MessageBubble(message: message, files: FileStore(), onOpen: { _ in }))
         renderer.proposedSize = ProposedViewSize(width: offered, height: nil)
         return renderer.nsImage?.size.width ?? 0
     }

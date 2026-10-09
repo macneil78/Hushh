@@ -3,8 +3,10 @@ import HushCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Where you write. Enter sends, Shift+Enter starts a new line, ↑ edits your last message,
-/// Esc cancels a reply or edit. Files can be attached, pasted or dropped onto the conversation.
+/// Where you write, as in Messages: a + button for photos, files, stickers and voice, and a
+/// glass message field floating over the conversation. Replies, edits and attachments show inside
+/// the field. Enter sends, Shift+Enter starts a new line, ↑ edits your last message, Esc cancels
+/// a reply or edit. Files can also be pasted or dropped onto the conversation.
 struct ComposerView: View {
     @Bindable var conversation: ConversationModel
     let stickers: StickerLibrary
@@ -13,41 +15,80 @@ struct ComposerView: View {
     @State private var isPickingFiles = false
     @State private var isPickingSticker = false
 
+    private var isEditing: Bool { conversation.editing != nil }
+
     var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-            if let editing = conversation.editing {
-                ComposerContextBar(title: "Editing message", text: editing.previewText, onCancel: conversation.cancelEditing)
-            } else if let reply = conversation.replyingTo {
-                ComposerContextBar(
-                    title: "Replying to \(reply.isOutgoing ? "yourself" : reply.sender.name)",
-                    text: reply.previewText,
-                    onCancel: conversation.cancelReply
-                )
+        HStack(alignment: .bottom, spacing: 8) {
+            if conversation.recorder.state == .idle {
+                plusButton
             }
-            if !conversation.attachments.isEmpty {
-                AttachmentStrip(attachments: conversation.attachments, onRemove: conversation.removeAttachment)
+            VStack(alignment: .leading, spacing: 0) {
+                if let editing = conversation.editing {
+                    ComposerContextBar(title: "Editing message", text: editing.previewText, onCancel: conversation.cancelEditing)
+                } else if let reply = conversation.replyingTo {
+                    ComposerContextBar(
+                        title: "Replying to \(reply.isOutgoing ? "yourself" : reply.sender.name)",
+                        text: reply.previewText,
+                        onCancel: conversation.cancelReply
+                    )
+                }
+                if !conversation.attachments.isEmpty {
+                    AttachmentStrip(attachments: conversation.attachments, onRemove: conversation.removeAttachment)
+                }
+                if conversation.recorder.state != .idle {
+                    RecordingBar(recorder: conversation.recorder, onCancel: conversation.cancelRecording, onSend: conversation.finishRecording)
+                } else {
+                    textRow
+                }
             }
-            if conversation.recorder.state != .idle {
-                RecordingBar(recorder: conversation.recorder, onCancel: conversation.cancelRecording, onSend: conversation.finishRecording)
-            } else {
-                inputRow
-            }
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
+    }
+
+    /// Photos and files, stickers and GIFs, a voice message.
+    private var plusButton: some View {
+        Menu {
+            Button("Photos and Files…", systemImage: "photo.on.rectangle") { isPickingFiles = true }
+            Button("Stickers and GIFs", systemImage: "face.smiling") { isPickingSticker = true }
+            Button("Voice Message", systemImage: "waveform", action: conversation.startRecording)
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .glassEffect(.regular.interactive(), in: Circle())
+        .help("Add photos, files, stickers or a voice message")
+        .disabled(isEditing)
+        .fileImporter(isPresented: $isPickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { conversation.attach(urls) }
+        }
+        .popover(isPresented: $isPickingSticker, arrowEdge: .top) {
+            StickerPicker(
+                library: stickers,
+                files: files,
+                onSticker: { sticker in
+                    isPickingSticker = false
+                    conversation.sendSticker(sticker)
+                },
+                onGIF: { gif in
+                    isPickingSticker = false
+                    conversation.sendGIF(gif)
+                }
+            )
         }
     }
 
-    private var inputRow: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Button("Attach Files", systemImage: "paperclip") { isPickingFiles = true }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .font(.title3)
-                .padding(.bottom, 6)
-                .disabled(conversation.editing != nil)
-                .fileImporter(isPresented: $isPickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                    if case .success(let urls) = result { conversation.attach(urls) }
-                }
-
+    private var textRow: some View {
+        HStack(alignment: .bottom, spacing: 4) {
             ComposerTextView(
                 text: $conversation.composerText,
                 height: $editorHeight,
@@ -68,51 +109,33 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            Button("Stickers and GIFs", systemImage: "face.smiling") { isPickingSticker.toggle() }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .font(.title3)
-                .padding(.bottom, 6)
-                .disabled(conversation.editing != nil)
-                .popover(isPresented: $isPickingSticker, arrowEdge: .top) {
-                    StickerPicker(
-                        library: stickers,
-                        files: files,
-                        onSticker: { sticker in
-                            isPickingSticker = false
-                            conversation.sendSticker(sticker)
-                        },
-                        onGIF: { gif in
-                            isPickingSticker = false
-                            conversation.sendGIF(gif)
-                        }
-                    )
-                }
-
-            if conversation.canSend || conversation.editing != nil {
-                Button(conversation.editing == nil ? "Send" : "Save", systemImage: conversation.editing == nil ? "arrow.up.circle.fill" : "checkmark.circle.fill") {
-                    conversation.send()
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .font(.system(size: 26))
-                .disabled(!conversation.canSend)
-                .padding(.bottom, 2)
-            } else {
-                // Nothing typed: the button records a voice message instead.
-                Button("Record Voice Message", systemImage: "mic.fill", action: conversation.startRecording)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 19))
-                    .frame(width: 30, height: 30)
-                    .padding(.bottom, 1)
-            }
+            trailingButton
+                .padding(.bottom, 3)
         }
-        .padding(10)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .padding(.vertical, 1)
+    }
+
+    /// Send once there's something to send; until then, record a voice message.
+    @ViewBuilder private var trailingButton: some View {
+        if conversation.canSend || isEditing {
+            Button(isEditing ? "Save" : "Send", systemImage: isEditing ? "checkmark.circle.fill" : "arrow.up.circle.fill") {
+                conversation.send()
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .font(.system(size: 22))
+            .foregroundStyle(MessagesStyle.outgoing)
+            .disabled(!conversation.canSend)
+        } else {
+            Button("Record Voice Message", systemImage: "waveform", action: conversation.startRecording)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+        }
     }
 }
 
@@ -142,7 +165,7 @@ struct AttachmentStrip: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 10)
             .padding(.top, 8)
         }
     }

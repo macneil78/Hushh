@@ -1,7 +1,7 @@
 import HushCore
 import SwiftUI
 
-/// The scrolling list of messages, day headings and the unread divider.
+/// The scrolling list of messages, time headings and the unread divider.
 struct MessageTimeline: View {
     let conversation: ConversationModel
     let files: FileStore
@@ -22,6 +22,9 @@ struct MessageTimeline: View {
                 }
                 ForEach(conversation.timeline) { item in
                     row(for: item)
+                }
+                if conversation.typingText != nil, !conversation.isChannel {
+                    TypingBubble()
                 }
                 // Telegram places a channel's sponsored message below its last post.
                 if let ad = conversation.sponsoredAd, !conversation.isLoadingInitial {
@@ -60,7 +63,7 @@ struct MessageTimeline: View {
                 .buttonStyle(.borderless)
                 .font(.title3)
                 .padding(10)
-                .background(.regularMaterial, in: Circle())
+                .glassEffect(.regular.interactive(), in: Circle())
                 .padding(16)
             }
         }
@@ -95,7 +98,7 @@ struct MessageTimeline: View {
                 let oldestShown = conversation.timeline.first { item in
                     switch item {
                     case .message, .album: true
-                    case .day, .unreadDivider: false
+                    case .timestamp, .unreadDivider: false
                     }
                 }?.id
                 let loaded = await conversation.loadOlder {
@@ -110,8 +113,8 @@ struct MessageTimeline: View {
 
     @ViewBuilder private func row(for item: TimelineItem) -> some View {
         switch item {
-        case .day(let date):
-            DayHeading(date: date)
+        case .timestamp(let date):
+            TimestampHeading(date: date)
         case .unreadDivider:
             UnreadDivider()
         case .message(let message, let isFirstInGroup, let isLastInGroup):
@@ -121,6 +124,7 @@ struct MessageTimeline: View {
                 isLastInGroup: isLastInGroup,
                 isGroup: conversation.isGroup,
                 isRead: message.id <= conversation.lastReadOutboxMessageId,
+                isLatest: message.id == conversation.messages.last?.id,
                 conversation: conversation,
                 files: files
             )
@@ -138,6 +142,7 @@ struct MessageTimeline: View {
                 isLastInGroup: isLastInGroup,
                 isGroup: conversation.isGroup,
                 isRead: (messages.last?.id ?? 0) <= conversation.lastReadOutboxMessageId,
+                isLatest: messages.last?.id == conversation.messages.last?.id,
                 conversation: conversation,
                 files: files
             )
@@ -154,20 +159,8 @@ struct MessageTimeline: View {
     }
 }
 
-struct DayHeading: View {
-    let date: Date
-
-    var body: some View {
-        Text(Self.label(for: date))
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(.quaternary.opacity(0.6), in: Capsule())
-            .padding(.top, 16)
-            .padding(.bottom, 6)
-    }
-
+enum DayHeading {
+    /// "Today", "Yesterday", a weekday within the week, otherwise the date.
     static func label(for date: Date, calendar: Calendar = .current) -> String {
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }

@@ -49,7 +49,6 @@ struct ChatListView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             if window.showsArchive { archiveHeader }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
     }
 
     /// Dropped straight onto a chat: open it with the files attached, ready for a caption.
@@ -99,21 +98,6 @@ struct ChatListView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-    }
-
-    private var footer: some View {
-        HStack {
-            Button {
-                window.isChoosingChats = true
-            } label: {
-                Label("Choose Chats…", systemImage: "line.3.horizontal.decrease.circle")
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 }
 

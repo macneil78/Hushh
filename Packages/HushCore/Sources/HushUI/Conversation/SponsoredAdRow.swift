@@ -118,13 +118,13 @@ struct SponsoredAdRow: View {
 /// Where the composer would be, in channels you can only read.
 struct ChannelFooter: View {
     var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-            Label("Only this channel's admins can post. You can read and react.", systemImage: "megaphone")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(14)
-        }
+        Label("Only this channel's admins can post. You can read and react.", systemImage: "megaphone")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .glassEffect(.regular, in: Capsule())
+            .frame(maxWidth: .infinity)
+            .padding(12)
     }
 }

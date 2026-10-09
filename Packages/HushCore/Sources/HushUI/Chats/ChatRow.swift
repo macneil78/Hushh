@@ -1,6 +1,8 @@
 import HushCore
 import SwiftUI
 
+/// A chat in the sidebar, as Messages lists conversations: picture, bold name, date, and two lines
+/// of the latest message; a blue dot when there's something unread.
 struct ChatRow: View {
     let item: ChatItem
     let files: FileStore
@@ -8,87 +10,129 @@ struct ChatRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        ChatRowLayout(
+            title: item.displayTitle,
+            preview: preview,
+            date: item.lastActivity.map { ChatDate.short($0) },
+            unread: unread,
+            isMuted: item.isMuted,
+            isPinned: item.isPinned(in: list),
+            isChannel: item.kind == .channel
+        ) {
             AvatarView(item: item, files: files, size: 40)
                 .overlay(alignment: .bottomTrailing) {
-                    if item.presence?.isOnline() == true {
-                        // Online now.
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 11, height: 11)
-                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
-                            .offset(x: 1, y: 1)
-                    }
+                    if item.presence?.isOnline() == true { OnlineDot() }
                 }
-            VStack(alignment: .leading, spacing: 3) {
+        }
+    }
+
+    private var preview: Text {
+        if let draft = item.draft, !isSelected {
+            return Text("\(Text("Draft:").foregroundStyle(.red)) \(draft)")
+        }
+        return Text(item.preview)
+    }
+
+    private var unread: ChatUnread? {
+        if item.unreadMentionCount > 0 { return .mention }
+        guard item.hasUnread else { return nil }
+        return item.isMuted ? .muted : .unread
+    }
+}
+
+/// What a chat's unread dot says.
+enum ChatUnread {
+    case unread
+    /// Unread, but in a muted chat.
+    case muted
+    /// Someone mentioned or replied to you.
+    case mention
+}
+
+/// A chat row's look, from plain values (the design preview draws it with made-up chats).
+struct ChatRowLayout<Picture: View>: View {
+    let title: String
+    let preview: Text
+    let date: String?
+    let unread: ChatUnread?
+    let isMuted: Bool
+    let isPinned: Bool
+    let isChannel: Bool
+    @ViewBuilder let picture: Picture
+
+    var body: some View {
+        HStack(spacing: 7) {
+            UnreadDot(unread: unread)
+            picture
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    if item.kind == .channel {
+                    if isChannel {
                         Image(systemName: "megaphone.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    Text(item.displayTitle)
-                        .fontWeight(item.hasUnread ? .semibold : .regular)
+                    Text(title)
+                        .font(.body.weight(.semibold))
                         .lineLimit(1)
-                    if item.isMuted {
+                    Spacer(minLength: 4)
+                    if isMuted {
                         Image(systemName: "bell.slash.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 4)
-                    if let date = item.lastActivity {
-                        Text(ChatDate.short(date))
-                            .font(.caption)
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let date {
+                        Text(date)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
-                HStack(alignment: .center, spacing: 4) {
-                    preview
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    badges
-                }
+                preview
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2, reservesSpace: true)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
     }
+}
 
-    @ViewBuilder private var preview: some View {
-        if let draft = item.draft, !isSelected {
-            Text("\(Text("Draft:").foregroundStyle(.red)) \(draft)")
-        } else {
-            Text(item.preview)
+/// Messages marks unread conversations with a blue dot beside the picture.
+struct UnreadDot: View {
+    let unread: ChatUnread?
+
+    var body: some View {
+        Group {
+            switch unread {
+            case .unread:
+                Circle().fill(MessagesStyle.outgoing).frame(width: 10, height: 10)
+            case .muted:
+                Circle().fill(.secondary).frame(width: 10, height: 10)
+            case .mention:
+                Text("@")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 14, height: 14)
+                    .background(MessagesStyle.outgoing, in: Circle())
+            case nil:
+                Color.clear.frame(width: 10, height: 10)
+            }
         }
+        .frame(width: 14)
     }
+}
 
-    @ViewBuilder private var badges: some View {
-        if item.unreadMentionCount > 0 {
-            badge("@")
-        }
-        if item.unreadBadge > 0 {
-            badge(String(item.unreadBadge))
-        } else if item.isPinned(in: list) {
-            Image(systemName: "pin.fill")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func badge(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .monospacedDigit()
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(badgeColor, in: Capsule())
-    }
-
-    private var badgeColor: AnyShapeStyle {
-        if isSelected { return AnyShapeStyle(.white.opacity(0.3)) }
-        return item.isMuted ? AnyShapeStyle(.gray) : AnyShapeStyle(.tint)
+struct OnlineDot: View {
+    var body: some View {
+        Circle()
+            .fill(.green)
+            .frame(width: 11, height: 11)
+            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
+            .offset(x: 1, y: 1)
     }
 }
 

@@ -126,40 +126,6 @@ struct RecordingBar: View {
     }
 }
 
-/// Reactions under a message. Click one to add yours or take it back.
-struct ReactionChips: View {
-    let reactions: [Reaction]
-    let onToggle: (String) -> Void
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(reactions) { reaction in
-                Button {
-                    if case .emoji(let emoji) = reaction.kind { onToggle(emoji) }
-                } label: {
-                    HStack(spacing: 3) {
-                        switch reaction.kind {
-                        case .emoji(let emoji): Text(emoji)
-                        case .customEmoji: Image(systemName: "face.smiling")
-                        case .paid: Image(systemName: "star.fill").foregroundStyle(.yellow)
-                        }
-                        Text("\(reaction.count)")
-                            .monospacedDigit()
-                    }
-                    .font(.caption)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(reaction.isChosen ? AnyShapeStyle(Color.accentColor.opacity(0.22)) : AnyShapeStyle(.quaternary.opacity(0.7)), in: Capsule())
-                    .overlay(Capsule().strokeBorder(reaction.isChosen ? Color.accentColor : .clear, lineWidth: 1))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled({ if case .emoji = reaction.kind { false } else { true } }())
-            }
-        }
-    }
-}
-
 /// The reactions a chat allows, to pick from.
 struct ReactionPicker: View {
     let choices: [String]
@@ -176,7 +142,7 @@ struct ReactionPicker: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 4), count: 8), spacing: 4) {
                     ForEach(choices, id: \.self) { emoji in
                         Button { onPick(emoji) } label: {
-                            Text(emoji)
+                            Text(Emoji.colorful(emoji))
                                 .font(.title2)
                                 .frame(width: 34, height: 34)
                                 .background(chosen.contains(emoji) ? AnyShapeStyle(Color.accentColor.opacity(0.22)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 7))

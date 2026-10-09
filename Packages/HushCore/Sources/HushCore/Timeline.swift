@@ -1,8 +1,9 @@
 import Foundation
 
-/// One row of the conversation: a day heading, the unread divider, a message, or an album.
+/// One row of the conversation: a time heading, the unread divider, a message, or an album.
 public enum TimelineItem: Identifiable, Equatable, Sendable {
-    case day(Date)
+    /// "Today 14:20" before the first message of each day, and after an hour's quiet.
+    case timestamp(Date)
     case unreadDivider
     /// Consecutive messages from one sender within a few minutes form a group: only the first
     /// shows the sender's name, only the last shows their picture.
@@ -12,7 +13,7 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
 
     public var id: String {
         switch self {
-        case .day(let date): "day-\(Int(date.timeIntervalSince1970))"
+        case .timestamp(let date): "time-\(Int(date.timeIntervalSince1970))"
         case .unreadDivider: "unread"
         case .message(let message, _, _): "message-\(message.id)"
         case .album(let messages, _, _): "album-\(messages[0].albumId)"
@@ -23,6 +24,8 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
 public enum Timeline {
     /// How far apart two messages can be and still group together.
     static let groupingInterval: TimeInterval = 5 * 60
+    /// The quiet after which a new time heading appears, as in Messages.
+    static let headingInterval: TimeInterval = 60 * 60
 
     public static func build(
         _ messages: [MessageModel],
@@ -50,16 +53,18 @@ public enum Timeline {
             let previous = index > 0 ? units[index - 1].last : nil
             let next = index + 1 < units.count ? units[index + 1] : nil
 
-            let startsDay = previous.map { !calendar.isDate($0.date, inSameDayAs: first.date) } ?? true
-            if startsDay {
-                items.append(.day(calendar.startOfDay(for: first.date)))
+            let startsBurst = previous.map {
+                !calendar.isDate($0.date, inSameDayAs: first.date) || first.date.timeIntervalSince($0.date) >= headingInterval
+            } ?? true
+            if startsBurst {
+                items.append(.timestamp(first.date))
             }
             let startsUnread = containsUnread(unit)
             if startsUnread {
                 items.append(.unreadDivider)
             }
 
-            let isFirst = startsDay || startsUnread || !continues(previous, first, calendar: calendar)
+            let isFirst = startsBurst || startsUnread || !continues(previous, first, calendar: calendar)
             let isLast = next.map { containsUnread($0) || !continues(last, $0[0], calendar: calendar) } ?? true
             if unit.count > 1 {
                 items.append(.album(unit, isFirstInGroup: isFirst, isLastInGroup: isLast))

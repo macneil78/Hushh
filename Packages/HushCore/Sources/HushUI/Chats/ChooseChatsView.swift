@@ -25,6 +25,10 @@ struct ChooseChatsView: View {
                 Text("Hushh shows your one-on-one chats. Groups, channels and bots stay hidden unless you switch them on here. Large public channels include Telegram's sponsored messages.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if isSheet {
+                    Text("You can change this later in Settings → Chats.")
+                        .foregroundStyle(.secondary)
+                }
                 TextField("Search", text: $query)
                     .textFieldStyle(.roundedBorder)
                     .padding(.top, 6)

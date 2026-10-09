@@ -2,55 +2,59 @@ import AppKit
 import HushCore
 import SwiftUI
 
-/// Photos, videos or files sent together, in one bubble.
+/// Photos, videos or files sent together: tiled photos and videos, or files in one bubble.
 struct AlbumRow: View {
     let messages: [MessageModel]
     let isFirstInGroup: Bool
     let isLastInGroup: Bool
     let isGroup: Bool
     let isRead: Bool
+    /// Whether this is your latest message with nothing after it, which shows "Delivered" or "Read".
+    let isLatest: Bool
     let conversation: ConversationModel
     let files: FileStore
+    @State private var isPickingReaction = false
 
     private var lead: MessageModel { messages[0] }
-    private var showsSender: Bool { isGroup && !lead.isOutgoing }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            if lead.isOutgoing { Spacer(minLength: 80) }
-            if showsSender {
-                SenderAvatarSlot(sender: lead.sender, showsAvatar: isLastInGroup, files: files)
-            }
-            VStack(alignment: lead.isOutgoing ? .trailing : .leading, spacing: 4) {
-                AlbumBubble(
-                    messages: messages,
-                    showsSenderName: showsSender && isFirstInGroup,
-                    isRead: isRead,
-                    files: files,
-                    conversation: conversation
-                )
+        // Telegram keeps an album's reactions on its first item.
+        MessageChrome(
+            lead: lead,
+            isFirstInGroup: isFirstInGroup,
+            isLastInGroup: isLastInGroup,
+            isGroup: isGroup,
+            isEdited: messages.contains(where: \.isEdited),
+            delivery: DeliveryStatus.State(for: messages, isRead: isRead, isLatest: isLatest),
+            reactions: lead.reactions,
+            canReact: !conversation.reactionChoices.isEmpty,
+            files: files,
+            onTapback: { isPickingReaction = true }
+        ) {
+            AlbumBubble(messages: messages, hasTail: isLastInGroup, files: files, conversation: conversation)
+                .help(lead.date.formatted(date: .abbreviated, time: .shortened))
                 .contextMenu { menu }
-                // Telegram keeps an album's reactions on its first item.
-                if !lead.reactions.isEmpty {
-                    ReactionChips(reactions: lead.reactions) { conversation.toggleReaction($0, on: lead) }
+                .popover(isPresented: $isPickingReaction) {
+                    ReactionPicker(
+                        choices: conversation.reactionChoices,
+                        chosen: Set(lead.reactions.filter(\.isChosen).compactMap {
+                            if case .emoji(let emoji) = $0.kind { return emoji }
+                            return nil
+                        }),
+                        onPick: { emoji in
+                            isPickingReaction = false
+                            conversation.toggleReaction(emoji, on: lead)
+                        }
+                    )
                 }
-            }
-            .frame(maxWidth: 560, alignment: lead.isOutgoing ? .trailing : .leading)
-            if !lead.isOutgoing { Spacer(minLength: 80) }
         }
-        .padding(.top, isFirstInGroup ? 8 : 2)
     }
 
     @ViewBuilder private var menu: some View {
-        Button("Reply") { conversation.reply(to: lead) }
-        let choices = conversation.reactionChoices
-        if !choices.isEmpty {
-            Menu("React") {
-                ForEach(choices.prefix(16), id: \.self) { emoji in
-                    Button(emoji) { conversation.toggleReaction(emoji, on: lead) }
-                }
-            }
+        if !conversation.reactionChoices.isEmpty {
+            Button("Tapback…") { isPickingReaction = true }
         }
+        Button("Reply") { conversation.reply(to: lead) }
         if let caption = messages.lazy.compactMap(\.caption).first(where: { !$0.isEmpty }) {
             Button("Copy Caption") {
                 NSPasteboard.general.clearContents()
@@ -66,8 +70,7 @@ struct AlbumRow: View {
 
 struct AlbumBubble: View {
     let messages: [MessageModel]
-    let showsSenderName: Bool
-    let isRead: Bool
+    var hasTail = true
     let files: FileStore
     let conversation: ConversationModel
 
@@ -75,7 +78,6 @@ struct AlbumBubble: View {
     private static let spacing: CGFloat = 2
 
     private var lead: MessageModel { messages[0] }
-    private var last: MessageModel { messages[messages.count - 1] }
     private var isOutgoing: Bool { lead.isOutgoing }
 
     /// Albums of files list them; albums of photos and videos tile them.
@@ -92,46 +94,41 @@ struct AlbumBubble: View {
     }
 
     var body: some View {
-        BubbleLayout(spacing: 4) {
-            if showsSenderName {
-                Text(lead.sender.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AccentPalette.color(for: lead.sender.accentColorId))
-                    .padding(.horizontal, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let forwardedFrom = lead.forwardedFrom {
-                Text("Forwarded from \(forwardedFrom)")
-                    .font(.caption.italic())
-                    .opacity(0.75)
-                    .padding(.horizontal, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let reply = lead.reply {
-                ReplyQuote(reply: reply, isOutgoing: isOutgoing)
-                    .padding(.horizontal, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 2) {
+            if lead.forwardedFrom != nil || lead.reply != nil {
+                bubble(hasTail: false) {
+                    if let forwardedFrom = lead.forwardedFrom {
+                        Text("Forwarded from \(forwardedFrom)")
+                            .font(.caption.italic())
+                            .opacity(0.75)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let reply = lead.reply {
+                        ReplyQuote(reply: reply, isOutgoing: isOutgoing)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
             if isFileAlbum {
-                fileList
+                bubble(hasTail: hasTail && caption == nil) { fileList }
             } else {
                 grid
+                    .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
             }
             if let caption {
-                RichTextView(text: caption, onAccent: isOutgoing)
-                    .padding(.horizontal, 6)
-                    .frame(width: isFileAlbum ? nil : Self.gridWidth, alignment: .leading)
+                bubble(hasTail: hasTail) {
+                    RichTextView(text: caption, onAccent: isOutgoing)
+                        .frame(maxWidth: isFileAlbum ? nil : Self.gridWidth, alignment: .leading)
+                }
             }
-            footer
-                .padding(.horizontal, 6)
-                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(4)
-        .foregroundStyle(isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .background(
-            isOutgoing ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary.opacity(0.7)),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
+    }
+
+    private func bubble(hasTail: Bool, @ViewBuilder content: () -> some View) -> some View {
+        BubbleLayout(spacing: 4) { content() }
+            .bubblePadding(isOutgoing: isOutgoing)
+            .foregroundStyle(isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .background(MessagesStyle.bubbleColor(isOutgoing: isOutgoing), in: BubbleShape(isOutgoing: isOutgoing, hasTail: hasTail))
     }
 
     /// Two per row; an odd last item spans the full width.
@@ -150,7 +147,7 @@ struct AlbumBubble: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: MessagesStyle.cornerRadius, style: .continuous))
     }
 
     @ViewBuilder private func cell(for message: MessageModel, size: CGSize) -> some View {
@@ -175,8 +172,7 @@ struct AlbumBubble: View {
                 }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
     }
 
     /// Right-clicking one item acts on that item alone.
@@ -197,34 +193,5 @@ struct AlbumBubble: View {
 
     private func open(_ url: URL) {
         conversation.quickLookURL = url
-    }
-
-    private var footer: some View {
-        HStack(spacing: 4) {
-            if messages.contains(where: \.isEdited) {
-                Text("edited")
-            }
-            Text(last.date.formatted(date: .omitted, time: .shortened))
-            if isOutgoing { statusIcon }
-        }
-        .font(.caption2)
-        .opacity(0.7)
-    }
-
-    @ViewBuilder private var statusIcon: some View {
-        if let failed = messages.first(where: { if case .failed = $0.status { true } else { false } }),
-           case .failed(let reason) = failed.status {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-                .help("Not sent: \(reason)")
-        } else if messages.contains(where: { $0.status == .sending }) {
-            Image(systemName: "clock")
-        } else {
-            HStack(spacing: -6) {
-                Image(systemName: "checkmark")
-                if isRead { Image(systemName: "checkmark") }
-            }
-            .help(isRead ? "Read" : "Sent")
-        }
     }
 }

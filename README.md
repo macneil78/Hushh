@@ -74,6 +74,8 @@ In the message box:
 
 - `swift run hush-smoke` checks that TDLib loads on this Mac. It needs no credentials.
 - `swift scripts/make-icon.swift` (from the repository root) redraws the app icon.
+- `HUSH_PREVIEW_DIR=/tmp/hushh-preview swift test --filter DesignPreviewTests` draws a made-up
+  conversation and sidebar with the real views, in light and dark mode, as PNGs.
 - TDLib's log (errors only) is written to `~/Library/Containers/com.macneil.Hush/Data/Library/Application Support/Hush/tdlib/tdlib.log`.
 
 ## Updating TDLib

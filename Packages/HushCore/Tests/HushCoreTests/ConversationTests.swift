@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @preconcurrency import TDLibKit
 @testable import HushCore
+@testable import HushUI
 
 struct RichTextTests {
     @Test func entitiesUseUTF16Offsets() {
@@ -55,7 +56,7 @@ struct TimelineTests {
     private func groups(_ items: [TimelineItem]) -> [String] {
         items.map { item in
             switch item {
-            case .day: "day"
+            case .timestamp: "time"
             case .unreadDivider: "unread"
             case .message(let message, let first, let last): "\(message.id)\(first ? "F" : "")\(last ? "L" : "")"
             case .album(let messages, let first, let last):
@@ -72,7 +73,7 @@ struct TimelineTests {
             message(3, from: 8, at: start + 120),
             message(4, from: 8, at: start + 120 + 600),  // ten minutes later: new group
         ], firstUnreadMessageId: nil, calendar: calendar)
-        #expect(groups(items) == ["day", "1F", "2L", "3FL", "4FL"])
+        #expect(groups(items) == ["time", "1F", "2L", "3FL", "4FL"])
     }
 
     @Test func dayHeadingsAndUnreadDividerBreakGroups() {
@@ -83,7 +84,17 @@ struct TimelineTests {
             message(3, from: 7, at: lateEvening + 600),  // after midnight
             message(4, from: 7, at: lateEvening + 660),
         ], firstUnreadMessageId: 4, calendar: calendar)
-        #expect(groups(items) == ["day", "1F", "2L", "day", "3FL", "unread", "4FL"])
+        #expect(groups(items) == ["time", "1F", "2L", "time", "3FL", "unread", "4FL"])
+    }
+
+    @Test func anHoursQuietBringsANewTimeHeading() {
+        let start = Foundation.Date(timeIntervalSince1970: 1_760_000_000)
+        let items = Timeline.build([
+            message(1, from: 7, at: start),
+            message(2, from: 8, at: start + 59 * 60),
+            message(3, from: 8, at: start + 59 * 60 + 3600),  // an hour later
+        ], firstUnreadMessageId: nil, calendar: calendar)
+        #expect(groups(items) == ["time", "1FL", "2FL", "time", "3FL"])
     }
 
     @Test func albumsBecomeOneItemThatStillGroups() {
@@ -95,7 +106,7 @@ struct TimelineTests {
             message(4, from: 7, at: start + 30, album: 99),
             message(5, from: 7, at: start + 60),
         ], firstUnreadMessageId: nil, calendar: calendar)
-        #expect(groups(items) == ["day", "1F", "[2,3,4]", "5L"])
+        #expect(groups(items) == ["time", "1F", "[2,3,4]", "5L"])
     }
 
     @Test func unreadInsideAnAlbumPutsTheDividerAboveIt() {
@@ -105,7 +116,7 @@ struct TimelineTests {
             message(2, from: 7, at: start + 30, album: 99),
             message(3, from: 7, at: start + 30, album: 99),
         ], firstUnreadMessageId: 3, calendar: calendar)
-        #expect(groups(items) == ["day", "1FL", "unread", "[2,3]FL"])
+        #expect(groups(items) == ["time", "1FL", "unread", "[2,3]FL"])
     }
 
     @Test func serviceMessagesStandAlone() {
@@ -115,7 +126,7 @@ struct TimelineTests {
             message(2, from: 7, at: start + 10, service: true),
             message(3, from: 7, at: start + 20),
         ], firstUnreadMessageId: nil, calendar: calendar)
-        #expect(groups(items) == ["day", "1FL", "2FL", "3FL"])
+        #expect(groups(items) == ["time", "1FL", "2FL", "3FL"])
     }
 }
 
@@ -145,5 +156,19 @@ struct MessageMapperTests {
         #expect(body(.messageChatUpgradeFrom(.init(basicGroupId: 1, title: "Old"))) == nil)
         #expect(body(.messageContactRegistered) == .service("Alex joined Telegram"))
         if case .placeholder = body(.messageUnsupported) {} else { Issue.record("Unsupported content should be a placeholder") }
+    }
+}
+
+struct ReactionEmojiTests {
+    @Test func bareSymbolsGetTheirColorfulForm() {
+        #expect(Emoji.colorful("\u{2764}") == "\u{2764}\u{FE0F}")  // ❤ → ❤️
+        #expect(Emoji.colorful("\u{2764}\u{200D}\u{1F525}") == "\u{2764}\u{FE0F}\u{200D}\u{1F525}")  // heart on fire
+        #expect(Emoji.colorful("\u{263A}") == "\u{263A}\u{FE0F}")  // ☺
+    }
+
+    @Test func emojiThatAreAlreadyColorfulStayAsTheyAre() {
+        for emoji in ["\u{2764}\u{FE0F}", "👍", "🔥", "🥰", "👍🏽", "🤷‍♂️"] {
+            #expect(Emoji.colorful(emoji) == emoji)
+        }
     }
 }

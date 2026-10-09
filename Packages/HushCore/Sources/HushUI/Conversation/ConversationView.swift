@@ -14,17 +14,21 @@ struct ConversationView: View {
     @State private var height: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            MessageTimeline(conversation: conversation, files: files)
-            if let error = conversation.errorMessage {
-                ErrorBanner(message: error) { conversation.errorMessage = nil }
+        // The composer floats over the bottom of the conversation, which scrolls under it.
+        MessageTimeline(conversation: conversation, files: files)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    if let error = conversation.errorMessage {
+                        ErrorBanner(message: error) { conversation.errorMessage = nil }
+                    }
+                    if conversation.canPost {
+                        ComposerView(conversation: conversation, stickers: stickers, files: files)
+                    } else {
+                        ChannelFooter()
+                    }
+                }
             }
-            if conversation.canPost {
-                ComposerView(conversation: conversation, stickers: stickers, files: files)
-            } else {
-                ChannelFooter()
-            }
-        }
+            .background(MessagesStyle.background)
         // Drop files anywhere on the conversation: top half as files, bottom half as photos and videos.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .onDrop(of: [.fileURL], delegate: AttachmentDropDelegate(
@@ -115,6 +119,8 @@ struct ErrorBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.orange.opacity(0.12))
+        .glassEffect(.regular.tint(.orange.opacity(0.25)), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
     }
 }
