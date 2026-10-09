@@ -62,11 +62,6 @@ extension TDLibClient {
         return try await resilientRun(query) { try ResilientDecoding.decode(Messages.self, from: $0, decoder: $1) }
     }
 
-    /// `getChat`, tolerant of a last message TDLibKit can't decode.
-    func resilientChat(id: Int64) async throws -> Chat {
-        try await resilientRun(GetChat(chatId: id)) { try ResilientDecoding.decode(Chat.self, from: $0, decoder: $1) }
-    }
-
     /// `getRepliedMessage`, tolerant of messages TDLibKit can't decode.
     func resilientRepliedMessage(chatId: Int64, messageId: Int64) async throws -> Message {
         try await resilientRun(GetRepliedMessage(chatId: chatId, messageId: messageId)) {

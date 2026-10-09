@@ -84,3 +84,9 @@ Bump TDLib every couple of months:
 1. In `Packages/HushCore/Package.swift`, bump both pins together. TDLibKit's tag looks like `1.5.2-tdlib-1.8.67-42e6a525`, and TDLibFramework's matching tag is `1.8.67-42e6a525`.
 2. Run `swift build`.
 3. Fix any new `AuthorizationState` cases the compiler reports.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Hushh builds on [TDLib](https://github.com/tdlib/td) (Boost Software
+License), [TDLibKit](https://github.com/Swiftgram/TDLibKit) (MIT) and
+[Lottie](https://github.com/airbnb/lottie-spm) (Apache 2.0).

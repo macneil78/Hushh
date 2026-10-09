@@ -317,73 +317,13 @@ public final class ChatStore {
     }
 
     /// Where a chat went, and so whether the sidebar shows it.
-    public func placement(of item: ChatItem) -> ChatPlacement {
+    private func placement(of item: ChatItem) -> ChatPlacement {
         let inMain = item.isIn(.main)
         guard inMain || item.isIn(.archive) else { return .outsideLists }
         let choice = visibility.choices[item.id]
         if VisibilityPolicy.isVisible(summary(of: item), choice: choice) { return inMain ? .shown : .archived }
         if choice == .hide { return .hiddenByYou }
         return item.isJoinedTelegramStub ? .joinedTelegramOnly : .notPicked
-    }
-
-    /// Finds chats by name wherever they went, for when one seems to be missing. Also asks
-    /// Telegram's servers, which finds chats this Mac was never told about.
-    public func lookUp(_ query: String) async -> [ChatLookup] {
-        let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty, let client else { return [] }
-        let matches = { (item: ChatItem) in item.displayTitle.localizedStandardContains(query) }
-        var results = items.values.filter(matches).map { ChatLookup(item: $0, placement: placement(of: $0), isFromServer: false) }
-        let localIds = Set(results.map(\.item.id))
-        let serverIds = (try? await client.searchChatsOnServer(limit: 20, query: query, typeFilter: nil))?.chatIds ?? []
-        let newIds = serverIds.filter { !localIds.contains($0) }
-        if !newIds.isEmpty {
-            // TDLib looks up where each new chat belongs; give it a moment.
-            try? await Task.sleep(for: .seconds(3))
-        }
-        for id in newIds {
-            let item: ChatItem
-            if let known = items[id] {
-                item = known
-            } else {
-                // The reply can overtake the chat's own update, so read the chat directly.
-                guard let chat = try? await client.resilientChat(id: id) else { continue }
-                item = ChatItem(chat)
-                item.kind = kind(of: item)
-                refreshPreview(of: item)
-            }
-            results.append(ChatLookup(item: item, placement: placement(of: item), isFromServer: true))
-        }
-        results.sort { ($0.item.lastActivity ?? .distantPast) > ($1.item.lastActivity ?? .distantPast) }
-        logLookup(results)
-        return results
-    }
-
-    /// Where looked-up chats sit in the sidebar, now and a moment later, without names: whether a
-    /// lookup moves a chat shows what kept it out of sight.
-    private func logLookup(_ results: [ChatLookup]) {
-        let ids = results.prefix(5).map(\.item.id)
-        let fromServer = Set(results.filter(\.isFromServer).map(\.item.id))
-        let describe = { [weak self] (moment: String) in
-            guard let self else { return }
-            for (index, id) in ids.enumerated() {
-                let item = self.items[id]
-                let row = self.mainList.firstIndex { $0.id == id }.map { "row \($0 + 1) of \(self.mainList.count)" } ?? "not in the sidebar"
-                let age = item?.lastActivity.map { "\(Int(-$0.timeIntervalSinceNow / 86400)) d" } ?? "none"
-                let order = item?.positions.first { $0.list == .chatListMain }?.order.rawValue ?? 0
-                Log.chats.notice("""
-                    Lookup \(moment, privacy: .public) #\(index + 1): \(item == nil ? "unknown" : "known", privacy: .public)\
-                    \(fromServer.contains(id) ? ", found only on the server" : "", privacy: .public), \
-                    \(item.map { self.placement(of: $0).description } ?? "-", privacy: .public), \(row, privacy: .public), \
-                    kind \(String(describing: item?.kind), privacy: .public), last message \(age, privacy: .public) ago, \
-                    order \(order, privacy: .public), title \(item.map { $0.title.isEmpty ? "empty" : "\($0.title.count) chars" } ?? "-", privacy: .public)
-                    """)
-            }
-        }
-        describe("now")
-        Task {
-            try? await Task.sleep(for: .seconds(4))
-            describe("4 s later")
-        }
     }
 
     func reset() {
@@ -648,7 +588,7 @@ public struct Person: Equatable, Sendable {
 }
 
 /// Where a chat went.
-public enum ChatPlacement: Equatable, Sendable {
+enum ChatPlacement: Equatable, Sendable {
     case shown
     case archived
     case hiddenByYou
@@ -658,27 +598,6 @@ public enum ChatPlacement: Equatable, Sendable {
     case notPicked
     /// In neither your chat list nor Archive on Telegram (deleted, or never started).
     case outsideLists
-
-    public var description: String {
-        switch self {
-        case .shown: "In your chat list"
-        case .archived: "In Archive (View → Show Archived Chats)"
-        case .hiddenByYou: "Hidden by you"
-        case .joinedTelegramOnly: "Hidden: it only holds “joined Telegram”"
-        case .notPicked: "Hidden until you pick it in Choose Chats…"
-        case .outsideLists: "Not in your Telegram chat list (deleted, or never started)"
-        }
-    }
-}
-
-/// A chat found by name, and where it went.
-public struct ChatLookup: Identifiable {
-    public let item: ChatItem
-    public let placement: ChatPlacement
-    /// Found only by asking Telegram's servers: this Mac's copy of the chat list lacked it.
-    public let isFromServer: Bool
-
-    public var id: Int64 { item.id }
 }
 
 /// Counts of where chats went, to explain a chat that seems to be missing.
