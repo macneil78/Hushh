@@ -12,7 +12,7 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 250, ideal: 310, max: 420)
         } detail: {
             if let conversation = model.conversation, let chat = model.chats.item(conversation.chatId) {
-                ConversationView(conversation: conversation, chat: chat, files: model.files, stickers: model.stickers)
+                ConversationView(conversation: conversation, chat: chat, files: model.files, stickers: model.stickers, chats: model.chats)
                     // A fresh view per chat: its own scroll position and composer focus.
                     .id(conversation.chatId)
             } else {
@@ -22,6 +22,14 @@ struct MainView: View {
         .onChange(of: window.selectedChatId, initial: true) { _, chatId in
             model.openConversation(chatId)
         }
+        // Photos and videos open over the whole window.
+        .overlay {
+            if let conversation = model.conversation, let message = conversation.viewerMessage {
+                MediaViewer(conversation: conversation, message: message, files: model.files)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.conversation?.viewerMessageId)
         .sheet(isPresented: $window.isChoosingChats, onDismiss: model.chats.finishChoosing) {
             ChooseChatsView(chats: model.chats, files: model.files)
         }

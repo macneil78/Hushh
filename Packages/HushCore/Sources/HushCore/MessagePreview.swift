@@ -34,6 +34,7 @@ enum MessagePreview {
         case .messageChatChangeTitle(let message): "Renamed the group to “\(message.title)”"
         case .messageChatChangePhoto: "Changed the group photo"
         case .messagePinMessage: "Pinned a message"
+        case .messageCustomServiceAction(let message): message.text
         case .messageExpiredPhoto, .messageExpiredVideo, .messageExpiredVideoNote, .messageExpiredVoiceNote:
             "Expired media"
         default: "Message"

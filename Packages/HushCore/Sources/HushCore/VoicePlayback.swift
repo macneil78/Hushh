@@ -133,7 +133,7 @@ public final class VoiceRecorder {
 
     public struct MicrophoneDenied: Error, CustomStringConvertible {
         public var description: String {
-            "Hush can't use the microphone. Allow it in System Settings → Privacy & Security → Microphone."
+            "Hushh can't use the microphone. Allow it in System Settings → Privacy & Security → Microphone."
         }
     }
 

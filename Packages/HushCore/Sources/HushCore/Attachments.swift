@@ -18,10 +18,11 @@ public struct Attachment: Identifiable, Equatable, Sendable {
 
     public var name: String { url.lastPathComponent }
 
-    public init(url: URL) {
+    /// `asFile` sends a picture or video as a file, in original quality, instead of compressed.
+    public init(url: URL, asFile: Bool = false) {
         id = UUID()
         self.url = url
-        kind = Self.kind(of: url)
+        kind = asFile ? .file : Self.kind(of: url)
     }
 
     static func kind(of url: URL) -> Kind {

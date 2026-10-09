@@ -15,13 +15,26 @@ public final class ConversationModel {
 
     public nonisolated let chatId: Int64
     public let isGroup: Bool
+    public let isChannel: Bool
+    /// False in channels where you aren't an admin: you can read and react, not post.
+    public let canPost: Bool
+    /// Telegram's sponsored message for this channel, shown below the last post.
+    public private(set) var sponsoredAd: SponsoredAd?
+    /// Set while Telegram asks why you're reporting the ad.
+    public var sponsoredReport: SponsoredReport?
     /// Oldest first.
-    public private(set) var messages: [MessageModel] = []
+    public private(set) var messages: [MessageModel] = [] {
+        didSet { rebuildTimeline() }
+    }
+    /// The rows the conversation shows, rebuilt only when messages change rather than on every redraw.
+    public private(set) var timeline: [TimelineItem] = []
     public private(set) var hasOlderMessages = true
     public private(set) var isLoadingInitial = true
     /// The first message you hadn't read when the chat opened. The "Unread Messages" divider sits
     /// above it and stays put while you read.
-    public private(set) var firstUnreadMessageId: Int64?
+    public private(set) var firstUnreadMessageId: Int64? {
+        didSet { rebuildTimeline() }
+    }
     /// Your messages up to this one have been read by the other side.
     public private(set) var lastReadOutboxMessageId: Int64
     /// "Alex is typing…", or nil.
@@ -31,8 +44,10 @@ public final class ConversationModel {
     public var composerText: String
     /// Files waiting to go out with the next send.
     public private(set) var attachments: [Attachment] = []
-    /// The file shown in Quick Look, if any.
+    /// The file shown in Quick Look, if any. Photos and videos use Hushh's viewer instead.
     public var quickLookURL: URL?
+    /// The photo or video open in the viewer.
+    public private(set) var viewerMessageId: Int64?
     public private(set) var replyingTo: MessageModel?
     public private(set) var editing: MessageModel?
     public var pendingDeletion: PendingDeletion?
@@ -48,7 +63,7 @@ public final class ConversationModel {
     /// The formatted text of your own messages, so editing keeps their formatting.
     @ObservationIgnored private var formattedTexts: [Int64: FormattedText] = [:]
     @ObservationIgnored private var oldestLoadedId: Int64?
-    @ObservationIgnored private var isLoadingOlder = false
+    public private(set) var isLoadingOlder = false
     @ObservationIgnored private var replyCache: [Int64: ReplyPreview] = [:]
     @ObservationIgnored private var replyLookups: Set<Int64> = []
     @ObservationIgnored private var typing: [Int64: String] = [:]
@@ -57,11 +72,14 @@ public final class ConversationModel {
     @ObservationIgnored private var isViewingScheduled = false
     @ObservationIgnored private var lastTypingSent = Foundation.Date.distantPast
     @ObservationIgnored private var isOpen = false
+    @ObservationIgnored private var isSponsoredAdViewed = false
 
     init(chat: ChatItem, client: TDLibClient, chats: ChatStore, voice: VoicePlayback) {
         self.voice = voice
         chatId = chat.id
         isGroup = chat.kind == .group
+        isChannel = chat.kind == .channel
+        canPost = chats.canPost(in: chat)
         lastReadOutboxMessageId = chat.lastReadOutboxMessageId
         savedDraft = chat.rawDraft ?? ""
         composerText = savedDraft
@@ -88,8 +106,8 @@ public final class ConversationModel {
         while loaded.count < target, isOpen {
             let page: [Message]
             do {
-                page = try await client.getChatHistory(
-                    chatId: chatId, fromMessageId: fromId, limit: min(100, target - loaded.count), offset: 0, onlyLocal: false
+                page = try await client.resilientChatHistory(
+                    chatId: chatId, fromMessageId: fromId, limit: min(100, target - loaded.count)
                 ).messages ?? []
             } catch {
                 errorMessage = AuthModel.describe(error)
@@ -110,6 +128,9 @@ public final class ConversationModel {
             firstUnreadMessageId = messages.first { !$0.isOutgoing && $0.id > lastReadInboxMessageId }?.id
         }
         isLoadingInitial = false
+        if isChannel, let sponsored = try? await client.getChatSponsoredMessages(chatId: chatId) {
+            sponsoredAd = sponsored.messages.lazy.compactMap(SponsoredAd.init).first
+        }
     }
 
     /// Saves your draft and tells TDLib the chat is closed.
@@ -129,24 +150,34 @@ public final class ConversationModel {
         }
     }
 
-    public func loadOlder() async {
-        guard hasOlderMessages, !isLoadingOlder, !isLoadingInitial, let oldestId = oldestLoadedId else { return }
+    /// Loads the page of history before the oldest loaded message. Returns whether it found any.
+    /// `afterMerge` runs in the same step that adds the page, so the view can adjust its scroll
+    /// position before anything is drawn.
+    @discardableResult
+    public func loadOlder(afterMerge: () -> Void = {}) async -> Bool {
+        guard hasOlderMessages, !isLoadingOlder, !isLoadingInitial, let oldestId = oldestLoadedId else { return false }
         isLoadingOlder = true
         defer { isLoadingOlder = false }
         let page: [Message]
         do {
-            page = try await client.getChatHistory(chatId: chatId, fromMessageId: oldestId, limit: 50, offset: 0, onlyLocal: false).messages ?? []
+            page = try await client.resilientChatHistory(chatId: chatId, fromMessageId: oldestId, limit: 50).messages ?? []
         } catch {
             errorMessage = AuthModel.describe(error)
-            return
+            return false
         }
         let older = page.filter { $0.id < oldestId }
         guard let oldest = older.last else {
             hasOlderMessages = false
-            return
+            return false
         }
         oldestLoadedId = oldest.id
         merge(older)
+        afterMerge()
+        return true
+    }
+
+    private func rebuildTimeline() {
+        timeline = Timeline.build(messages, firstUnreadMessageId: firstUnreadMessageId)
     }
 
     // MARK: Composer
@@ -198,8 +229,9 @@ public final class ConversationModel {
 
     // MARK: Attachments, stickers and GIFs
 
-    /// Adds files to send (from the attach button, drag and drop, or paste).
-    public func attach(_ urls: [URL]) {
+    /// Adds files to send (from the attach button, drag and drop, or paste). `asFiles` sends
+    /// pictures and videos as files, in original quality, rather than compressed.
+    public func attach(_ urls: [URL], asFiles: Bool = false) {
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty else { return }
         cancelEditing()
@@ -207,7 +239,7 @@ public final class ConversationModel {
             // The sandbox lets Hush read files you picked or dropped. Keep that access for the
             // rest of the session, since TDLib uploads in the background.
             _ = url.startAccessingSecurityScopedResource()
-            attachments.append(Attachment(url: url))
+            attachments.append(Attachment(url: url, asFile: asFiles))
         }
         focusRequest += 1
     }
@@ -319,6 +351,33 @@ public final class ConversationModel {
         _ = try await client.sendMessage(chatId: chatId, inputMessageContent: content, options: nil, replyMarkup: nil, replyTo: replyTo(replyToMessageId), topicId: nil)
     }
 
+    // MARK: Viewer
+
+    public var viewerMessage: MessageModel? {
+        viewerMessageId.flatMap { id in messages.first { $0.id == id } }
+    }
+
+    /// This chat's photos and videos, oldest first, to step through in the viewer.
+    public var viewableMedia: [MessageModel] {
+        messages.filter(\.isViewableMedia)
+    }
+
+    public func openViewer(_ message: MessageModel) {
+        viewerMessageId = message.id
+    }
+
+    public func closeViewer() {
+        viewerMessageId = nil
+        focusRequest += 1  // back to the message box
+    }
+
+    /// The previous (−1) or next (+1) photo or video, if there is one.
+    public func showAdjacentMedia(_ step: Int) {
+        let media = viewableMedia
+        guard let index = media.firstIndex(where: { $0.id == viewerMessageId }), media.indices.contains(index + step) else { return }
+        viewerMessageId = media[index + step].id
+    }
+
     // MARK: Voice messages
 
     /// Plays or pauses a voice message. Playing someone's for the first time marks it as listened,
@@ -384,6 +443,57 @@ public final class ConversationModel {
             voiceNote: InputVoiceNote(duration: note.duration, voiceNote: .inputFileLocal(InputFileLocal(path: note.url.path)), waveform: note.waveform)
         ))
         _ = try await client.sendMessage(chatId: chatId, inputMessageContent: content, options: nil, replyMarkup: nil, replyTo: replyTo(replyToMessageId), topicId: nil)
+    }
+
+    // MARK: Sponsored messages
+
+    /// Counts the ad as seen, once its whole text is on screen, as Telegram requires.
+    public func sponsoredAdBecameFullyVisible() {
+        guard let ad = sponsoredAd, !isSponsoredAdViewed, NSApp.isActive else { return }
+        isSponsoredAdViewed = true
+        let chatId = chatId
+        let client = client
+        Task { _ = try? await client.viewMessages(chatId: chatId, forceRead: false, messageIds: [ad.id], source: nil) }
+    }
+
+    /// Tells Telegram the ad was clicked. The view then opens its link.
+    public func sponsoredAdClicked(isMediaClick: Bool) {
+        guard let ad = sponsoredAd else { return }
+        let chatId = chatId
+        let client = client
+        Task {
+            _ = try? await client.clickChatSponsoredMessage(chatId: chatId, fromFullscreen: false, isMediaClick: isMediaClick, messageId: ad.id)
+        }
+    }
+
+    /// Reports the ad. Telegram answers with reasons to choose from; pass the chosen one back.
+    public func reportSponsoredAd(option: SponsoredReport.Option? = nil) {
+        guard let ad = sponsoredAd else { return }
+        sponsoredReport = nil
+        let chatId = chatId
+        let client = client
+        Task {
+            do {
+                let result = try await client.reportChatSponsoredMessage(chatId: chatId, messageId: ad.id, optionId: option?.id ?? Data())
+                switch result {
+                case .reportSponsoredResultOptionRequired(let choice):
+                    sponsoredReport = SponsoredReport(
+                        title: choice.title,
+                        options: choice.options.map { SponsoredReport.Option(id: $0.id, text: $0.text) }
+                    )
+                case .reportSponsoredResultOk, .reportSponsoredResultAdsHidden:
+                    sponsoredAd = nil
+                case .reportSponsoredResultPremiumRequired:
+                    errorMessage = "Hiding ads needs Telegram Premium."
+                case .reportSponsoredResultFailed:
+                    errorMessage = "Telegram couldn't take the report. Try again later."
+                }
+            } catch let error as TDLibKit.Error where error.message == "AD_EXPIRED" {
+                sponsoredAd = nil
+            } catch {
+                errorMessage = AuthModel.describe(error)
+            }
+        }
     }
 
     // MARK: Reactions
@@ -731,7 +841,7 @@ public final class ConversationModel {
         let client = client
         Task {
             let preview: ReplyPreview
-            if let replied = try? await client.getRepliedMessage(chatId: chatId, messageId: fromMessageId) {
+            if let replied = try? await client.resilientRepliedMessage(chatId: chatId, messageId: fromMessageId) {
                 let sender = sender(of: replied.senderId)
                 preview = ReplyPreview(
                     senderName: replied.isOutgoing ? "You" : sender.name,

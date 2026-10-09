@@ -1,6 +1,7 @@
 // Shared build settings. Personal values go in Secrets.xcconfig, which git ignores.
 
-PRODUCT_NAME = Hush
+PRODUCT_NAME = Hushh
+// Kept from the app's first name: macOS ties the sandbox data (and your login) to it.
 PRODUCT_BUNDLE_IDENTIFIER = com.macneil.Hush
 MARKETING_VERSION = 0.1
 CURRENT_PROJECT_VERSION = 1

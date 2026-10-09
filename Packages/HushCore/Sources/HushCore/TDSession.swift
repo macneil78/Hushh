@@ -22,7 +22,7 @@ public final class TDSession: Sendable {
         client = Self.manager.createClient { data, client in
             let update: Update
             do {
-                update = try client.decoder.decode(Update.self, from: data)
+                update = try ResilientDecoding.decode(Update.self, from: data, decoder: client.decoder)
             } catch {
                 Log.session.error("Skipping an update TDLibKit can't decode: \(String(describing: error), privacy: .public)")
                 return

@@ -8,7 +8,7 @@ struct LoginView: View {
     var body: some View {
         VStack(spacing: 28) {
             VStack(spacing: 6) {
-                Text("Hush")
+                Text("Hushh")
                     .font(.largeTitle.weight(.semibold))
                 Text("Your Telegram chats, without the noise.")
                     .foregroundStyle(.secondary)

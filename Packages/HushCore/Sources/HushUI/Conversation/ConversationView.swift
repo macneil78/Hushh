@@ -8,6 +8,10 @@ struct ConversationView: View {
     let chat: ChatItem
     let files: FileStore
     let stickers: StickerLibrary
+    let chats: ChatStore
+    @State private var drop: DropState?
+    @State private var now = Date.now
+    @State private var height: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,16 +19,33 @@ struct ConversationView: View {
             if let error = conversation.errorMessage {
                 ErrorBanner(message: error) { conversation.errorMessage = nil }
             }
-            ComposerView(conversation: conversation, stickers: stickers, files: files)
+            if conversation.canPost {
+                ComposerView(conversation: conversation, stickers: stickers, files: files)
+            } else {
+                ChannelFooter()
+            }
         }
-        // Drop files anywhere on the conversation to attach them.
-        .dropDestination(for: URL.self) { urls, _ in
-            conversation.attach(urls)
-            return urls.contains(where: \.isFileURL)
+        // Drop files anywhere on the conversation: top half as files, bottom half as photos and videos.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .onDrop(of: [.fileURL], delegate: AttachmentDropDelegate(
+            state: $drop,
+            height: height,
+            isEnabled: conversation.canPost,
+            onDrop: { urls, asFiles in conversation.attach(urls, asFiles: asFiles) }
+        ))
+        .overlay {
+            if let drop { DropZonesOverlay(state: drop) }
         }
         .quickLookPreview($conversation.quickLookURL)
         .navigationTitle(chat.displayTitle)
-        .navigationSubtitle(conversation.typingText ?? "")
+        .navigationSubtitle(conversation.typingText ?? subtitle(at: now))
+        // "last seen 5 minutes ago" ages, so refresh it now and then.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                now = .now
+            }
+        }
         .confirmationDialog(
             (conversation.pendingDeletion?.messages.count ?? 1) > 1
                 ? "Delete these \(conversation.pendingDeletion?.messages.count ?? 0) items?"
@@ -41,6 +62,38 @@ struct ConversationView: View {
             if deletion.canDeleteForMe {
                 Button("Delete for Me", role: .destructive) { conversation.delete(deletion, forEveryone: false) }
             }
+        }
+        .confirmationDialog(
+            conversation.sponsoredReport?.title ?? "Report Ad",
+            isPresented: Binding(
+                get: { conversation.sponsoredReport != nil },
+                set: { if !$0 { conversation.sponsoredReport = nil } }
+            ),
+            presenting: conversation.sponsoredReport
+        ) { report in
+            ForEach(report.options) { option in
+                Button(option.text) { conversation.reportSponsoredAd(option: option) }
+            }
+        }
+    }
+}
+
+extension ConversationView {
+    /// Under the chat's name: online or last seen for people, size for groups and channels.
+    private func subtitle(at now: Date) -> String {
+        switch chat.kind {
+        case .person, .secret:
+            return chat.presence?.text(now: now) ?? ""
+        case .bot:
+            return "bot"
+        case .group:
+            return chats.memberCount(of: chat).map { "\($0) member\($0 == 1 ? "" : "s")" } ?? ""
+        case .channel:
+            return chats.memberCount(of: chat).map { "\($0) subscriber\($0 == 1 ? "" : "s")" } ?? ""
+        case .service:
+            return "service notifications"
+        case .savedMessages:
+            return ""
         }
     }
 }

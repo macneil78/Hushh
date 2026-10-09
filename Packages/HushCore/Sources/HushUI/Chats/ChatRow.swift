@@ -10,8 +10,23 @@ struct ChatRow: View {
     var body: some View {
         HStack(spacing: 10) {
             AvatarView(item: item, files: files, size: 40)
+                .overlay(alignment: .bottomTrailing) {
+                    if item.presence?.isOnline() == true {
+                        // Online now.
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 11, height: 11)
+                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
+                            .offset(x: 1, y: 1)
+                    }
+                }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    if item.kind == .channel {
+                        Image(systemName: "megaphone.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     Text(item.displayTitle)
                         .fontWeight(item.hasUnread ? .semibold : .regular)
                         .lineLimit(1)

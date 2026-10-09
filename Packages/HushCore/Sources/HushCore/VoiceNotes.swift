@@ -100,7 +100,7 @@ enum OggOpusWriter {
         head.append(0)  // channel mapping family: mono or stereo
         appendPage([head], granule: 0, flags: 0x02)  // beginning of stream
 
-        let vendor = Data("Hush".utf8)
+        let vendor = Data("Hushh".utf8)
         var tags = Data("OpusTags".utf8)
         tags.appendLittleEndian(UInt32(vendor.count))
         tags.append(vendor)

@@ -56,7 +56,7 @@ struct ComposerView: View {
                 onUpArrowInEmptyComposer: conversation.editLastMessage,
                 onEscape: conversation.cancelComposerMode,
                 onTextChange: conversation.composerChanged,
-                onPasteFiles: conversation.attach
+                onPasteFiles: { conversation.attach($0) }
             )
             .frame(height: min(max(editorHeight, 30), 180))
             .overlay(alignment: .topLeading) {
@@ -148,8 +148,10 @@ struct AttachmentStrip: View {
     }
 
     @ViewBuilder private func preview(of attachment: Attachment) -> some View {
-        if attachment.kind == .photo, let image = ImageCache.image(at: attachment.url) {
-            Image(nsImage: image).resizable().scaledToFill()
+        if attachment.kind == .photo {
+            LocalImage(url: attachment.url, maxPixelSize: 72) {
+                Rectangle().fill(.quaternary)
+            }
         } else {
             Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.url.path))
                 .resizable()

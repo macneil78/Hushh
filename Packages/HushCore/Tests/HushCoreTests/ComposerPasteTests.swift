@@ -57,3 +57,14 @@ struct ComposerPasteTests {
         #expect(pasted() == nil)
     }
 }
+
+struct DroppedFileTests {
+    @Test func readsFinderFileURLsInEveryForm() {
+        let file = URL(filePath: "/Users/someone/Desktop/report.pdf")
+        #expect(AttachmentDropDelegate.fileURL(from: file as NSURL) == file)
+        #expect(AttachmentDropDelegate.fileURL(from: file.dataRepresentation as NSData) == file)
+        #expect(AttachmentDropDelegate.fileURL(from: file.absoluteString as NSString) == file)
+        // Web links aren't files to attach.
+        #expect(AttachmentDropDelegate.fileURL(from: URL(string: "https://example.com")! as NSURL) == nil)
+    }
+}

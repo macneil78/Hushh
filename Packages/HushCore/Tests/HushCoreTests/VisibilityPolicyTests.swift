@@ -6,13 +6,8 @@ struct VisibilityPolicyTests {
         ChatSummary(id: 1, kind: kind, title: "Chat", isJoinedTelegramStub: joinedStub)
     }
 
-    @Test(arguments: [nil, VisibilityChoice.show, .hide])
-    func channelsAreNeverVisible(choice: VisibilityChoice?) {
-        #expect(!VisibilityPolicy.isVisible(chat(.channel), choice: choice))
-    }
-
-    @Test(arguments: [ChatKind.group, .bot, .service])
-    func groupsBotsAndServiceAreHiddenUntilPicked(kind: ChatKind) {
+    @Test(arguments: [ChatKind.group, .channel, .bot, .service])
+    func groupsChannelsBotsAndServiceAreHiddenUntilPicked(kind: ChatKind) {
         #expect(!VisibilityPolicy.isVisible(chat(kind), choice: nil))
         #expect(VisibilityPolicy.isVisible(chat(kind), choice: .show))
         #expect(!VisibilityPolicy.isVisible(chat(kind), choice: .hide))
@@ -28,11 +23,5 @@ struct VisibilityPolicyTests {
         #expect(!VisibilityPolicy.isVisible(chat(.person, joinedStub: true), choice: nil))
         #expect(VisibilityPolicy.isVisible(chat(.person, joinedStub: false), choice: nil))
         #expect(VisibilityPolicy.isVisible(chat(.person, joinedStub: true), choice: .show))
-    }
-
-    @Test func channelsCannotBePicked() {
-        #expect(!VisibilityPolicy.isPickable(.channel))
-        #expect(VisibilityPolicy.isPickable(.group))
-        #expect(VisibilityPolicy.isPickable(.bot))
     }
 }

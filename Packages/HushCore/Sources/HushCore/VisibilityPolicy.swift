@@ -40,20 +40,13 @@ public enum VisibilityChoice: String, Codable, Sendable {
 public enum VisibilityPolicy {
     public static func isVisible(_ chat: ChatSummary, choice: VisibilityChoice?) -> Bool {
         switch chat.kind {
-        case .channel:
-            // Never, whatever the choice. Showing no channel content also means Telegram's
-            // requirement to display sponsored messages in channels doesn't apply.
-            return false
-        case .group, .bot, .service:
+        case .group, .channel, .bot, .service:
+            // Hidden until you pick them. Picked channels come with Telegram's sponsored
+            // messages, which its API terms require clients to show.
             return choice == .show
         case .person, .savedMessages, .secret:
             if let choice { return choice == .show }
             return !chat.isJoinedTelegramStub
         }
-    }
-
-    /// Whether the chat can be picked in the "Choose groups & bots" sheet.
-    public static func isPickable(_ kind: ChatKind) -> Bool {
-        kind != .channel
     }
 }

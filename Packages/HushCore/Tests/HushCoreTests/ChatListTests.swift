@@ -73,3 +73,23 @@ struct VisibilitySettingsTests {
         #expect(again.choices == [-1_001_234_567_890: .show])
     }
 }
+
+@MainActor
+struct ChatListReportTests {
+    @Test func readsTelegramsRetryDelay() {
+        #expect(ChatStore.retryAfter("Too Many Requests: retry after 23") == 23)
+        #expect(ChatStore.retryAfter("FLOOD_WAIT") == nil)
+    }
+
+    @Test func summaryNamesWhereChatsWent() {
+        var report = ChatListReport(isLoaded: true, loadProblem: nil, knownChats: 120)
+        report.peopleShown = 40
+        report.peopleArchived = 6
+        report.groupsNotPicked = 12
+        #expect(report.summary.contains("40 in the list, 6 archived"))
+        #expect(report.summary.contains("12 groups"))
+        #expect(!report.summary.contains("stopped early"))
+        report.loadProblem = "Too many attempts."
+        #expect(report.summary.contains("Loading stopped early: Too many attempts."))
+    }
+}

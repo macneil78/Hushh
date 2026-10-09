@@ -133,7 +133,7 @@ public final class AuthModel {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             }
         } catch {
-            step = .failed("Hush couldn't prepare its local database: \(error)")
+            step = .failed("Hushh couldn't prepare its local database: \(error)")
             return
         }
         guard let client else { return }

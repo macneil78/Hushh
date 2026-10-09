@@ -71,6 +71,8 @@ struct AttachmentTests {
         #expect(Attachment(url: URL(filePath: "/tmp/a.gif")).kind == .file)
         #expect(Attachment(url: URL(filePath: "/tmp/report.pdf")).kind == .file)
         #expect(Attachment(url: URL(filePath: "/tmp/noextension")).kind == .file)
+        // Dropped on "Send as Files": original quality.
+        #expect(Attachment(url: URL(filePath: "/tmp/a.jpg"), asFile: true).kind == .file)
     }
 
     @Test func photosBecomeJPEGsFlattenedOntoWhite() throws {
@@ -104,5 +106,24 @@ struct MediaSizeTests {
         #expect(MediaSize.fit(width: 600, height: 1200) == CGSize(width: 170, height: 340))
         // Very wide panoramas keep a usable height.
         #expect(MediaSize.fit(width: 5000, height: 500).height == 90)
+    }
+}
+
+@MainActor
+struct ImageCacheTests {
+    @Test func imagesDecodeAtDisplaySizeAndAreReused() async throws {
+        let context = CGContext(
+            data: nil, width: 4000, height: 1000, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let url = FileManager.default.temporaryDirectory.appending(path: "hush-test-\(UUID().uuidString).png")
+        let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let image = try #require(await ImageCache.load(url, maxPixelSize: 720))
+        #expect(image.size == CGSize(width: 720, height: 180))
+        #expect(ImageCache.cached(url, maxPixelSize: 720) === image)
     }
 }

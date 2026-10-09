@@ -41,6 +41,7 @@ struct MessageRow: View {
                             isRead: isRead,
                             files: files,
                             onOpen: { conversation.quickLookURL = $0 },
+                            onOpenMedia: { conversation.openViewer(message) },
                             voice: conversation.voice,
                             onPlayVoice: { conversation.playVoiceNote(message, url: $0) }
                         )
@@ -100,8 +101,13 @@ struct MessageRow: View {
                 NSPasteboard.general.setString(message.plainText, forType: .string)
             }
         }
+        if message.isViewableMedia {
+            Button("View") { conversation.openViewer(message) }
+        }
         if let fileId = message.fileId, let url = files.handle(for: fileId).localURL {
-            Button("Quick Look") { conversation.quickLookURL = url }
+            if !message.isViewableMedia {
+                Button("Quick Look") { conversation.quickLookURL = url }
+            }
             Button("Save As…") { FileActions.saveAs(url, suggestedName: suggestedFileName(for: url)) }
         }
         Divider()
@@ -123,6 +129,8 @@ struct MessageBubble: View {
     let files: FileStore
     /// Opens a downloaded file in Quick Look.
     let onOpen: (URL) -> Void
+    /// Opens a photo or video in Hushh's viewer.
+    var onOpenMedia: () -> Void = {}
     /// Plays voice messages; nil where nothing can play (previews and tests).
     var voice: VoicePlayback?
     var onPlayVoice: (URL) -> Void = { _ in }
@@ -212,12 +220,12 @@ struct MessageBubble: View {
             richText(text)
         case .photo(let photo, let caption):
             VStack(alignment: .leading, spacing: 6) {
-                PhotoView(photo: photo, files: files, onOpen: onOpen)
+                PhotoView(photo: photo, files: files, onOpen: onOpenMedia)
                 mediaCaption(caption, width: MediaSize.fit(width: photo.image.width, height: photo.image.height).width)
             }
         case .video(let video, let caption):
             VStack(alignment: .leading, spacing: 6) {
-                VideoView(video: video, files: files, onOpen: onOpen)
+                VideoView(video: video, files: files, onOpen: onOpenMedia)
                 mediaCaption(caption, width: MediaSize.fit(width: video.width, height: video.height).width)
             }
         case .videoNote(let note):

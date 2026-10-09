@@ -16,7 +16,7 @@ public struct HushScenes: Scene {
 
     public var body: some Scene {
         // One window, like Signal. Closing it keeps Hush running so messages keep arriving.
-        Window("Hush", id: Self.mainWindowId) {
+        Window("Hushh", id: Self.mainWindowId) {
             RootView(model: model, window: window)
                 .frame(minWidth: 760, minHeight: 520)
                 .task { model.start() }
@@ -69,7 +69,7 @@ struct HushCommands: Commands {
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
             .disabled(!isReady)
-            Button("Choose Groups & Bots…") { window.isChoosingChats = true }
+            Button("Choose Chats…") { window.isChoosingChats = true }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(!isReady)
         }

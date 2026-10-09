@@ -1,3 +1,4 @@
+import AppKit
 import HushCore
 import SwiftUI
 
@@ -5,6 +6,9 @@ import SwiftUI
 struct ChatListView: View {
     let model: AppModel
     @Bindable var window: WindowState
+
+    /// Hovering a dragged file over a chat for a moment opens it, as in Telegram.
+    @State private var springLoad: Task<Void, Never>?
 
     private var chats: ChatStore { model.chats }
     private var listKind: ChatListKind { window.showsArchive ? .archive : .main }
@@ -23,10 +27,22 @@ struct ChatListView: View {
                 ChatRow(item: item, files: model.files, list: listKind, isSelected: window.selectedChatId == item.id)
                     .tag(item.id)
                     .contextMenu { ChatContextMenu(item: item, chats: chats, window: window) }
+                    .onDrop(of: [.fileURL], delegate: ChatRowDropDelegate(
+                        onTargeted: { springLoad(item, isTargeted: $0) },
+                        onDrop: { drop($0, on: item) }
+                    ))
             }
         }
         .listStyle(.sidebar)
         .searchable(text: $window.searchText, placement: .sidebar, prompt: "Search")
+        .task(id: window.searchText) {
+            // Once typing pauses, also ask Telegram's servers: a chat the downloaded list left
+            // out then joins the list and shows up here.
+            guard !window.searchText.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            await chats.searchServer(window.searchText)
+        }
         .overlay {
             if items.isEmpty { emptyState }
         }
@@ -34,6 +50,28 @@ struct ChatListView: View {
             if window.showsArchive { archiveHeader }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+    }
+
+    /// Dropped straight onto a chat: open it with the files attached, ready for a caption.
+    private func drop(_ urls: [URL], on item: ChatItem) -> Bool {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else { return false }
+        window.selectedChatId = item.id
+        model.openConversation(item.id)
+        guard let conversation = model.conversation, conversation.canPost else { return false }
+        conversation.attach(files)
+        return true
+    }
+
+    private func springLoad(_ item: ChatItem, isTargeted: Bool) {
+        springLoad?.cancel()
+        springLoad = nil
+        guard isTargeted, window.selectedChatId != item.id else { return }
+        springLoad = Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            window.selectedChatId = item.id
+        }
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -68,7 +106,7 @@ struct ChatListView: View {
             Button {
                 window.isChoosingChats = true
             } label: {
-                Label("Choose Groups & Bots…", systemImage: "line.3.horizontal.decrease.circle")
+                Label("Choose Chats…", systemImage: "line.3.horizontal.decrease.circle")
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
@@ -76,6 +114,30 @@ struct ChatListView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+/// Files dropped onto a chat in the sidebar, read off the drag pasteboard during the drop as the
+/// conversation's own drop zones do.
+struct ChatRowDropDelegate: DropDelegate {
+    let onTargeted: (Bool) -> Void
+    let onDrop: ([URL]) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.fileURL])
+    }
+
+    func dropEntered(info: DropInfo) {
+        onTargeted(true)
+    }
+
+    func dropExited(info: DropInfo) {
+        onTargeted(false)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        onTargeted(false)
+        return onDrop(AttachmentDropDelegate.fileURLs(on: NSPasteboard(name: .drag)))
     }
 }
 

@@ -24,12 +24,12 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Hush
+        CFBundleDisplayName: Hushh
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.social-networking
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSMicrophoneUsageDescription: Hush uses the microphone to record voice messages.
+        NSMicrophoneUsageDescription: Hushh uses the microphone to record voice messages.
         # Filled from Config/Secrets.xcconfig, read by TDConfiguration.load().
         HushTelegramAPIId: $(HUSH_API_ID)
         HushTelegramAPIHash: $(HUSH_API_HASH)

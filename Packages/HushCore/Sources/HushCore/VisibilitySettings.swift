@@ -5,7 +5,7 @@ import Observation
 @MainActor @Observable
 final class VisibilitySettings {
     private(set) var choices: [Int64: VisibilityChoice] = [:]
-    /// Whether you've been through the "Choose Groups & Bots" sheet once.
+    /// Whether you've been through the "Choose Chats" sheet once.
     private(set) var hasChosenGroupsAndBots = false
     private(set) var isLoaded = false
 

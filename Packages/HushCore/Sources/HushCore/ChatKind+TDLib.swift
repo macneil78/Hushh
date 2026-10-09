@@ -1,4 +1,18 @@
 @preconcurrency import TDLibKit
+import Foundation
+
+extension Presence {
+    init(_ status: UserStatus) {
+        switch status {
+        case .userStatusOnline(let online): self = .online(until: Foundation.Date(timeIntervalSince1970: TimeInterval(online.expires)))
+        case .userStatusOffline(let offline): self = .lastSeen(Foundation.Date(timeIntervalSince1970: TimeInterval(offline.wasOnline)))
+        case .userStatusRecently: self = .recently
+        case .userStatusLastWeek: self = .withinWeek
+        case .userStatusLastMonth: self = .withinMonth
+        case .userStatusEmpty: self = .longAgo
+        }
+    }
+}
 
 extension ChatKind {
     /// Classifies a TDLib chat. TDLib always sends a user or supergroup before any chat that

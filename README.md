@@ -1,4 +1,4 @@
-# Hush
+# Hushh
 
 A calm macOS client for Telegram: your friends' chats, without stories, channels or noise.
 Unofficial client using the Telegram API, built on [TDLib](https://github.com/tdlib/td) through
@@ -7,9 +7,12 @@ Unofficial client using the Telegram API, built on [TDLib](https://github.com/td
 | Chat | Shown? |
 |---|---|
 | People, Saved Messages | Yes, unless you hide one |
-| Groups, bots, Telegram's service chat | Only the ones you pick |
-| Channels | Never |
+| Groups, channels, bots, Telegram's service chat | Only the ones you pick |
 | "X joined Telegram" chats | Not until someone actually writes |
+
+Picked channels are read-only unless you're an admin, and large public ones show Telegram's
+sponsored messages below the last post: Telegram's API terms require clients that show channels to
+include them.
 
 Calls and secret chats stay on your phone: this Mac's session tells Telegram it can't accept them.
 
@@ -24,7 +27,7 @@ Calls and secret chats stay on your phone: this Mac's session tells Telegram it 
    team set, you can also add `ENABLE_HARDENED_RUNTIME = YES`. Without a team it has to stay off:
    the hardened runtime refuses to load the embedded Lottie framework into a "Sign to Run Locally"
    build.
-5. Run `xcodegen generate && open Hush.xcodeproj`, then press Run.
+5. Run `xcodegen generate && open Hush.xcodeproj`, then press Run. The scheme is still called Hush; it builds Hushh.app.
 
 ## Keyboard
 
@@ -34,7 +37,7 @@ Calls and secret chats stay on your phone: this Mac's session tells Telegram it 
 | ⌘1 – ⌘9 | The first nine chats in your list |
 | ⌥⌘↑ / ⌥⌘↓ | Previous / next chat |
 | ⇧⌘A | Archived chats |
-| ⇧⌘G | Choose groups & bots |
+| ⇧⌘G | Choose which groups, channels and bots to show |
 | ⌘, | Settings |
 
 In the message box:
@@ -45,6 +48,14 @@ In the message box:
 | Shift+Enter | New line |
 | ↑ | Edit your last message (box empty) |
 | Esc | Cancel a reply, edit or recording |
+
+## Drag and drop
+
+- Drag files onto a conversation: drop on the top half to send them as files (original quality),
+  on the bottom half to send pictures and videos compressed, shown right in the chat.
+- Drop files on a chat in the sidebar to open it with them attached, or hover there a moment to
+  switch to it first.
+- Drag a photo, video or file out of a chat into Finder or another app for a copy.
 
 ## Develop
 

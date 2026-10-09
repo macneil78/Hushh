@@ -7,21 +7,25 @@ struct MessageTimeline: View {
     let files: FileStore
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
+    @State private var isNearTop = false
+    @State private var isPaging = false
 
     var body: some View {
-        let items = Timeline.build(conversation.messages, firstUnreadMessageId: conversation.firstUnreadMessageId)
         ScrollView {
             LazyVStack(spacing: 0) {
                 if conversation.hasOlderMessages, !conversation.isLoadingInitial {
-                    ProgressView()
-                        .controlSize(.small)
-                        .padding(12)
-                        // Runs again after each page while the spinner is still on screen
-                        // (short chats), until the screen fills or history runs out.
-                        .task(id: conversation.messages.first?.id) { await conversation.loadOlder() }
+                    Color.clear
+                        .frame(height: 36)
+                        .overlay {
+                            if conversation.isLoadingOlder { ProgressView().controlSize(.small) }
+                        }
                 }
-                ForEach(items) { item in
+                ForEach(conversation.timeline) { item in
                     row(for: item)
+                }
+                // Telegram places a channel's sponsored message below its last post.
+                if let ad = conversation.sponsoredAd, !conversation.isLoadingInitial {
+                    SponsoredAdRow(ad: ad, conversation: conversation, files: files)
                 }
             }
             .scrollTargetLayout()
@@ -34,6 +38,13 @@ struct MessageTimeline: View {
             geometry.contentSize.height - geometry.visibleRect.maxY < 150
         } action: { _, isNearBottom in
             self.isNearBottom = isNearBottom
+        }
+        // The scroll position decides when older history loads: only within 200 points of the top.
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.height > 0 && geometry.contentOffset.y + geometry.contentInsets.top < 200
+        } action: { _, isNearTop in
+            self.isNearTop = isNearTop
+            if isNearTop { loadOlderWhileNearTop() }
         }
         .overlay {
             if conversation.isLoadingInitial && conversation.messages.isEmpty {
@@ -66,6 +77,34 @@ struct MessageTimeline: View {
             if isNearBottom || conversation.messages.last?.isOutgoing == true {
                 withAnimation { position.scrollTo(edge: .bottom) }
             }
+        }
+    }
+
+    /// One page at a time, while you're near the top. At the very top the scroll view sticks to its
+    /// top edge, so a new page would appear right where you're looking and trigger the next one.
+    /// So when a page arrives while you're still up there, the message that was oldest goes back
+    /// to the top of the window, in the same step as the page is added: the new page sits above,
+    /// out of view, until you scroll up into it. If you've scrolled away meanwhile, nothing moves.
+    /// A very short page can leave you near the top (a chat with little history); then it keeps
+    /// going, but only while that's true.
+    private func loadOlderWhileNearTop() {
+        guard !isPaging else { return }
+        isPaging = true
+        Task {
+            while isNearTop {
+                let oldestShown = conversation.timeline.first { item in
+                    switch item {
+                    case .message, .album: true
+                    case .day, .unreadDivider: false
+                    }
+                }?.id
+                let loaded = await conversation.loadOlder {
+                    if isNearTop, let oldestShown { position.scrollTo(id: oldestShown, anchor: .top) }
+                }
+                guard loaded else { break }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            isPaging = false
         }
     }
 

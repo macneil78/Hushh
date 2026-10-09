@@ -42,7 +42,7 @@ enum DatabaseKey {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrLabel as String: "Hush database key",
+            kSecAttrLabel as String: "Hushh database key",
             kSecValueData as String: key,
         ]
         let addStatus = SecItemAdd(attributes as CFDictionary, nil)

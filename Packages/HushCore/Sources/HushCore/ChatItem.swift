@@ -34,6 +34,8 @@ public final class ChatItem: Identifiable {
     public internal(set) var unreadMentionCount: Int
     public internal(set) var isMarkedAsUnread: Bool
     public internal(set) var isMuted = false
+    /// For one-on-one chats: online, or when last seen.
+    public internal(set) var presence: Presence?
     var positions: [ChatPosition]
 
     // Raw TDLib state the store needs but views don't.

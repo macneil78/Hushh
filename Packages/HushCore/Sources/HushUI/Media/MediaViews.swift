@@ -26,14 +26,16 @@ struct RemoteImage: View {
     let files: FileStore
     var contentMode: ContentMode = .fill
     var priority = 1
+    /// Decoded no larger than this: twice the biggest size media appears at, for Retina.
+    var maxPixelSize = 720
 
     var body: some View {
-        Group {
-            if let source, let image = ImageCache.image(at: files.handle(for: source.fileId).localURL) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: contentMode)
-            } else if let minithumbnail, let image = NSImage(data: minithumbnail) {
+        LocalImage(
+            url: source.flatMap { files.handle(for: $0.fileId).localURL },
+            maxPixelSize: maxPixelSize,
+            contentMode: contentMode
+        ) {
+            if let minithumbnail, let image = NSImage(data: minithumbnail) {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
@@ -51,7 +53,8 @@ struct RemoteImage: View {
 struct PhotoView: View {
     let photo: PhotoMedia
     let files: FileStore
-    let onOpen: (URL) -> Void
+    /// Opens the viewer, which fetches the full resolution itself.
+    let onOpen: () -> Void
     /// Set for album cells; otherwise the photo's own shape, fitted.
     var size: CGSize?
     var cornerRadius: CGFloat = 12
@@ -62,17 +65,20 @@ struct PhotoView: View {
             .frame(width: size.width, height: size.height)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .contentShape(Rectangle())
-            .onTapGesture {
-                if let url = files.handle(for: photo.image.fileId).localURL { onOpen(url) }
+            .onTapGesture(perform: onOpen)
+            // Drag into Finder or another app for a copy, full resolution when it's downloaded.
+            .onDrag {
+                .file(files.handle(for: photo.largest.fileId).localURL ?? files.handle(for: photo.image.fileId).localURL)
             }
     }
 }
 
-/// Videos show a poster with a play button and open in Quick Look. GIFs play silently in a loop.
+/// Videos show a poster with a play button and open in the viewer. GIFs play silently in a loop.
 struct VideoView: View {
     let video: VideoMedia
     let files: FileStore
-    let onOpen: (URL) -> Void
+    /// Opens the viewer, which downloads the video if needed.
+    let onOpen: () -> Void
     /// Set for album cells; otherwise the video's own shape, fitted.
     var size: CGSize?
     var cornerRadius: CGFloat = 12
@@ -117,13 +123,8 @@ struct VideoView: View {
                 .padding(6)
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            if let url = handle.localURL {
-                onOpen(url)
-            } else {
-                files.download(video.fileId, priority: 32)
-            }
-        }
+        .onTapGesture(perform: onOpen)
+        .onDrag { .file(files.handle(for: video.fileId).localURL) }
         .task(id: video.fileId) {
             if video.isGIF || video.size <= Self.autoDownloadLimit { files.download(video.fileId) }
         }
@@ -193,9 +194,7 @@ struct StickerView: View {
         let handle = files.handle(for: sticker.fileId)
         switch sticker.format {
         case .image:
-            if let image = ImageCache.image(at: handle.localURL) {
-                Image(nsImage: image).resizable().scaledToFit()
-            } else {
+            LocalImage(url: handle.localURL, maxPixelSize: Int(size * 2), contentMode: .fit) {
                 placeholder
             }
         case .lottie:
@@ -284,6 +283,7 @@ struct DocumentView: View {
         }
         .frame(maxWidth: 300, alignment: .leading)
         .contentShape(Rectangle())
+        .onDrag { .file(files.handle(for: document.fileId).localURL) }
         .onTapGesture {
             if let url = handle.localURL {
                 onOpen(url)

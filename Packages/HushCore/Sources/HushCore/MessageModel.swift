@@ -90,6 +90,14 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
         return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }
 
+    /// Photos and videos (GIFs included) open in Hushh's own viewer.
+    public var isViewableMedia: Bool {
+        switch body {
+        case .photo, .video: true
+        default: false
+        }
+    }
+
     public var caption: RichText? {
         switch body {
         case .photo(_, let caption), .video(_, let caption), .document(_, let caption): caption
@@ -260,7 +268,7 @@ enum MessageMapper {
         case .messageUnsupported:
             return .placeholder("This message needs a newer Telegram app. Open it on your phone.")
         default:
-            return .placeholder("Hush can't show this kind of message yet. Open Telegram on your phone to see it.")
+            return .placeholder("Hushh can't show this kind of message yet. Open Telegram on your phone to see it.")
         }
     }
 

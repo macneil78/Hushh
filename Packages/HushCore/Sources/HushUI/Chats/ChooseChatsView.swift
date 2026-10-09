@@ -1,7 +1,7 @@
 import HushCore
 import SwiftUI
 
-/// The "Choose Groups & Bots" sheet: everything hidden by default, opted in one by one.
+/// The "Choose Chats" sheet: groups, channels and bots, hidden until switched on one by one.
 struct ChooseChatsView: View {
     let chats: ChatStore
     let files: FileStore
@@ -20,9 +20,9 @@ struct ChooseChatsView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Choose Groups & Bots")
+                Text("Choose Chats")
                     .font(.title2.weight(.semibold))
-                Text("Hush shows your one-on-one chats. Groups and bots stay hidden unless you switch them on here. Channels never appear.")
+                Text("Hushh shows your one-on-one chats. Groups, channels and bots stay hidden unless you switch them on here. Large public channels include Telegram's sponsored messages.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 TextField("Search", text: $query)
@@ -32,11 +32,12 @@ struct ChooseChatsView: View {
             .padding(20)
 
             if candidates.isEmpty {
-                ContentUnavailableView("No Groups or Bots", systemImage: "person.3")
+                ContentUnavailableView("Nothing to Choose", systemImage: "person.3")
                     .frame(maxHeight: .infinity)
             } else {
                 List {
                     section("Groups", kinds: [.group])
+                    section("Channels", kinds: [.channel])
                     section("Bots", kinds: [.bot, .service])
                     section("Hidden People", kinds: [.person, .savedMessages, .secret])
                 }

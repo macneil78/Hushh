@@ -156,9 +156,9 @@ struct AlbumBubble: View {
     @ViewBuilder private func cell(for message: MessageModel, size: CGSize) -> some View {
         switch message.body {
         case .photo(let photo, _):
-            PhotoView(photo: photo, files: files, onOpen: open, size: size, cornerRadius: 0)
+            PhotoView(photo: photo, files: files, onOpen: { conversation.openViewer(message) }, size: size, cornerRadius: 0)
         case .video(let video, _):
-            VideoView(video: video, files: files, onOpen: open, size: size, cornerRadius: 0)
+            VideoView(video: video, files: files, onOpen: { conversation.openViewer(message) }, size: size, cornerRadius: 0)
         default:
             Rectangle()
                 .fill(.quaternary)
@@ -181,11 +181,16 @@ struct AlbumBubble: View {
 
     /// Right-clicking one item acts on that item alone.
     @ViewBuilder private func itemMenu(for message: MessageModel) -> some View {
-        if let fileId = message.fileId, let url = files.handle(for: fileId).localURL {
-            Button("Quick Look") { open(url) }
-            Button("Save As…") { FileActions.saveAs(url, suggestedName: url.lastPathComponent) }
-            Divider()
+        if message.isViewableMedia {
+            Button("View") { conversation.openViewer(message) }
         }
+        if let fileId = message.fileId, let url = files.handle(for: fileId).localURL {
+            if !message.isViewableMedia {
+                Button("Quick Look") { open(url) }
+            }
+            Button("Save As…") { FileActions.saveAs(url, suggestedName: url.lastPathComponent) }
+        }
+        Divider()
         Button("Reply") { conversation.reply(to: message) }
         Button("Delete…", role: .destructive) { conversation.requestDeletion(of: [message]) }
     }

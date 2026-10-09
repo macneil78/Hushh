@@ -29,7 +29,7 @@ struct SettingsView: View {
     }
 
     private var notLoggedIn: some View {
-        Text("Log in to choose which chats Hush shows.")
+        Text("Log in to choose which chats Hushh shows.")
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(40)
@@ -86,7 +86,7 @@ struct NotificationSettings: View {
                 Toggle("Show message text", isOn: $preferences.showsPreview)
                     .disabled(!preferences.isEnabled)
             } footer: {
-                Text("Only chats you can see in Hush notify. Chats muted in Telegram, here or on your phone, stay silent.")
+                Text("Only chats you can see in Hushh notify. Chats muted in Telegram, here or on your phone, stay silent.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -104,6 +104,10 @@ struct NotificationSettings: View {
 
 struct AboutSettings: View {
     let model: AppModel
+    @State private var report: ChatListReport?
+    @State private var query = ""
+    @State private var lookup: [ChatLookup]?
+    @State private var isLookingUp = false
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–"
@@ -114,7 +118,7 @@ struct AboutSettings: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 72, height: 72)
-            Text("Hush \(version)")
+            Text("Hushh \(version)")
                 .font(.title3.weight(.semibold))
             Text("Your Telegram chats, without the noise.")
                 .foregroundStyle(.secondary)
@@ -127,8 +131,103 @@ struct AboutSettings: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
+            if model.auth.step == .ready {
+                chatListReport
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(30)
+        .onAppear { report = model.chats.report() }
+    }
+
+    /// Where your chats went, for when one seems to be missing.
+    private var chatListReport: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Your chat list")
+                .font(.headline)
+            Text(report?.summary ?? "")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Archived chats are under View → Show Archived Chats (⇧⌘A).")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            HStack {
+                Button("Refresh") { report = model.chats.report() }
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(report?.summary ?? "", forType: .string)
+                }
+            }
+            Divider()
+                .padding(.vertical, 4)
+            findChat
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.top, 16)
+    }
+
+    /// Looks a missing chat up by name and says where it went.
+    private var findChat: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField("Find a chat by name", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(lookUp)
+                if isLookingUp {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if let lookup {
+                if lookup.isEmpty {
+                    Text("Neither Hushh nor Telegram's servers know a chat by that name.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                // A plain stack: the Settings window grows to fit it, where a scroll view
+                // would collapse to nothing.
+                ForEach(lookup.prefix(6)) { result in
+                    row(result)
+                }
+            }
+        }
+    }
+
+    private func row(_ result: ChatLookup) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(result.item.displayTitle)
+                .font(.callout.weight(.medium))
+            Text(result.isFromServer
+                 ? "Telegram's list had left this chat out; now found. \(result.placement.description)."
+                 : "\(Self.kindName(result.item.kind)) · \(result.placement.description)")
+                .font(.caption)
+                .foregroundStyle(result.isFromServer ? .orange : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func lookUp() {
+        let query = query
+        isLookingUp = true
+        Task {
+            lookup = await model.chats.lookUp(query)
+            isLookingUp = false
+        }
+    }
+
+    private static func kindName(_ kind: ChatKind) -> String {
+        switch kind {
+        case .person: "Person"
+        case .savedMessages: "Saved Messages"
+        case .secret: "Secret chat"
+        case .group: "Group"
+        case .channel: "Channel"
+        case .bot: "Bot"
+        case .service: "Service chat"
+        }
     }
 }

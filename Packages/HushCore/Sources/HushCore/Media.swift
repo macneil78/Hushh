@@ -11,6 +11,8 @@ public struct ImageSource: Equatable, Sendable {
 public struct PhotoMedia: Equatable, Sendable {
     /// The size worth showing in a conversation.
     public let image: ImageSource
+    /// Full resolution, for the viewer.
+    public let largest: ImageSource
     /// A tiny, blurry JPEG to show until the image downloads.
     public let minithumbnail: Data?
 }
@@ -78,9 +80,11 @@ enum MediaMapping {
     /// 800 pixels on the long side), or the largest available.
     static func photo(_ photo: Photo) -> PhotoMedia? {
         let sizes = photo.sizes.sorted { $0.width * $0.height < $1.width * $1.height }
-        guard let size = sizes.first(where: { max($0.width, $0.height) >= 800 }) ?? sizes.last else { return nil }
+        guard let size = sizes.first(where: { max($0.width, $0.height) >= 800 }) ?? sizes.last,
+              let largest = sizes.last else { return nil }
         return PhotoMedia(
             image: ImageSource(fileId: size.photo.id, width: size.width, height: size.height),
+            largest: ImageSource(fileId: largest.photo.id, width: largest.width, height: largest.height),
             minithumbnail: photo.minithumbnail?.data
         )
     }
