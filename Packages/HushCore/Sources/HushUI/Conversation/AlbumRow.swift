@@ -11,8 +11,10 @@ struct AlbumRow: View {
     let isRead: Bool
     /// Whether this is your latest message with nothing after it, which shows "Delivered" or "Read".
     let isLatest: Bool
+    var isHighlighted = false
     let conversation: ConversationModel
     let files: FileStore
+    var swipe: SwipeToReply?
     @State private var isPickingReaction = false
 
     private var lead: MessageModel { messages[0] }
@@ -29,6 +31,8 @@ struct AlbumRow: View {
             reactions: lead.reactions,
             canReact: !conversation.reactionChoices.isEmpty,
             files: files,
+            swipe: swipe,
+            isHighlighted: isHighlighted,
             onTapback: { isPickingReaction = true }
         ) {
             AlbumBubble(messages: messages, hasTail: isLastInGroup, files: files, conversation: conversation)

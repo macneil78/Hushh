@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 
@@ -9,6 +10,8 @@ public struct HushScenes: Scene {
 
     private let model: AppModel
     @State private var window = WindowState()
+    /// On-device AI models, shared by every account.
+    @State private var models = ModelStore()
 
     public init(model: AppModel) {
         self.model = model
@@ -18,6 +21,7 @@ public struct HushScenes: Scene {
         // One window, like Signal. Closing it keeps Hush running so messages keep arriving.
         Window("Hushh", id: Self.mainWindowId) {
             RootView(model: model, window: window)
+                .environment(models)
                 .frame(minWidth: 760, minHeight: 520)
                 .task { model.start() }
         }
@@ -27,6 +31,7 @@ public struct HushScenes: Scene {
 
         Settings {
             SettingsView(model: model)
+                .environment(models)
         }
     }
 }
@@ -41,6 +46,17 @@ struct HushCommands: Commands {
         CommandGroup(after: .appSettings) {
             Button("Log Out…") { window.isConfirmingLogOut = true }
                 .disabled(!isReady)
+        }
+        CommandMenu("Chat") {
+            Button("Find in Chat…") { window.isSearchingChat = true }
+                .keyboardShortcut("f")
+                .disabled(model.conversation == nil)
+            let recorder = model.conversation?.recorder
+            Button(recorder?.state == .recording ? "Send Voice Message" : "Record Voice Message") {
+                model.conversation?.toggleRecording()
+            }
+            .keyboardShortcut("r")
+            .disabled(model.conversation?.canPost != true || recorder?.state == .encoding)
         }
         CommandMenu("Go") {
             Button("Switch to Chat…") { window.isSwitchingChats = true }
@@ -68,6 +84,11 @@ struct HushCommands: Commands {
                 window.showsArchive.toggle()
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
+            .disabled(!isReady)
+            Button(window.showsChatDetails ? "Back to Chat" : "Show Chat Info") {
+                window.showsChatDetails.toggle()
+            }
+            .keyboardShortcut("i")
             .disabled(!isReady)
             // Choosing which groups, channels and bots to show lives in Settings only, a step
             // away, so adding one is a deliberate choice.

@@ -91,6 +91,21 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
     }
 
     /// Photos and videos (GIFs included) open in Hushh's own viewer.
+    /// The voice message's or circle's transcription, if Telegram has made one.
+    public var transcription: Transcription? {
+        switch body {
+        case .voiceNote(let note, _): note.transcription
+        case .videoNote(let note): note.transcription
+        default: nil
+        }
+    }
+
+    /// The finished transcript, for search.
+    public var transcript: String? {
+        if case .done(let text) = transcription, !text.isEmpty { return text }
+        return nil
+    }
+
     public var isViewableMedia: Bool {
         switch body {
         case .photo, .video: true

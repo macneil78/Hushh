@@ -48,6 +48,9 @@ public final class ConversationModel {
     public var quickLookURL: URL?
     /// The photo or video open in the viewer.
     public private(set) var viewerMessageId: Int64?
+    /// Which photos and videos the viewer steps through: the chat's loaded ones, or the shared
+    /// media panel's.
+    private var viewerShowsSharedMedia = false
     public private(set) var replyingTo: MessageModel?
     public private(set) var editing: MessageModel?
     public var pendingDeletion: PendingDeletion?
@@ -58,6 +61,10 @@ public final class ConversationModel {
 
     @ObservationIgnored private let client: TDLibClient
     @ObservationIgnored private let chats: ChatStore
+    /// The chat's photos, files, links, voice messages and music, for the details panel.
+    @ObservationIgnored public private(set) lazy var sharedMedia = SharedMediaModel(chatId: chatId, client: client) { [weak self] in
+        self?.model(for: $0)
+    }
     @ObservationIgnored private var savedDraft: String
     @ObservationIgnored private var textBeforeEditing = ""
     /// The formatted text of your own messages, so editing keeps their formatting.
@@ -154,13 +161,13 @@ public final class ConversationModel {
     /// `afterMerge` runs in the same step that adds the page, so the view can adjust its scroll
     /// position before anything is drawn.
     @discardableResult
-    public func loadOlder(afterMerge: () -> Void = {}) async -> Bool {
+    public func loadOlder(limit: Int = 50, afterMerge: () -> Void = {}) async -> Bool {
         guard hasOlderMessages, !isLoadingOlder, !isLoadingInitial, let oldestId = oldestLoadedId else { return false }
         isLoadingOlder = true
         defer { isLoadingOlder = false }
         let page: [Message]
         do {
-            page = try await client.resilientChatHistory(chatId: chatId, fromMessageId: oldestId, limit: 50).messages ?? []
+            page = try await client.resilientChatHistory(chatId: chatId, fromMessageId: oldestId, limit: limit).messages ?? []
         } catch {
             errorMessage = AuthModel.describe(error)
             return false
@@ -174,6 +181,104 @@ public final class ConversationModel {
         merge(older)
         afterMerge()
         return true
+    }
+
+    // MARK: Jumping to a message
+
+    /// Asks the view to scroll to a message. A new one each time, so asking again scrolls again.
+    public struct RevealRequest: Equatable, Sendable {
+        public let messageId: Int64
+        private let token = UUID()
+    }
+
+    public private(set) var revealRequest: RevealRequest?
+    /// Set for a moment after a jump, so the message flashes.
+    public private(set) var highlightedMessageId: Int64?
+
+    /// How much history a jump loads, at most, before showing the message in context instead.
+    static let revealLimit = 3_000
+
+    /// Scrolls to a message (a search result, say), loading older history until it's there.
+    /// False when it's further back than `revealLimit` messages, or gone.
+    @discardableResult
+    public func reveal(_ messageId: Int64) async -> Bool {
+        if !messages.contains(where: { $0.id == messageId }) {
+            guard await loadHistory(through: messageId) else { return false }
+        }
+        revealRequest = RevealRequest(messageId: messageId)
+        highlightedMessageId = messageId
+        Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            if highlightedMessageId == messageId { highlightedMessageId = nil }
+        }
+        return true
+    }
+
+    /// Loads older history until it includes the message, plus a page more so the message isn't
+    /// right at the top (where scrolling would load more and move it). The pages are gathered
+    /// first and merged once: a merge per page would redraw the conversation every time.
+    private func loadHistory(through messageId: Int64) async -> Bool {
+        while isLoadingOlder || isLoadingInitial {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard hasOlderMessages, var from = oldestLoadedId, messageId < from else { return false }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        var gathered: [Message] = []
+        var isFound = false
+        while messages.count + gathered.count < Self.revealLimit {
+            guard let page = try? await client.resilientChatHistory(chatId: chatId, fromMessageId: from, limit: 100).messages else {
+                return false
+            }
+            let older = page.filter { $0.id < from }
+            guard let oldest = older.last else {
+                hasOlderMessages = false
+                break
+            }
+            gathered += older
+            from = oldest.id
+            if isFound { break }
+            isFound = older.contains { $0.id == messageId }
+        }
+        guard isFound else { return false }
+        oldestLoadedId = from
+        merge(gathered)
+        return true
+    }
+
+    /// A message with a few on either side, oldest first: for one too far back to jump to.
+    public func context(around messageId: Int64) async -> [MessageModel] {
+        let page = try? await client.resilientChatHistory(chatId: chatId, fromMessageId: messageId, limit: 9, offset: -4)
+        return (page?.messages ?? []).compactMap(model(for:)).reversed()
+    }
+
+    // MARK: Searching
+
+    /// History before `messageId` (0: from the newest), newest first: for the search index.
+    public func historyPage(before messageId: Int64, limit: Int = 100) async throws -> [MessageModel] {
+        let page = try await client.resilientChatHistory(chatId: chatId, fromMessageId: messageId, limit: limit)
+        return (page.messages ?? []).filter { messageId == 0 || $0.id < messageId }.compactMap(model(for:))
+    }
+
+    /// Messages containing the words, across the chat's whole history: Telegram's own search.
+    public func searchMessages(_ query: String, limit: Int = 50) async throws -> [MessageModel] {
+        let found = try await client.resilientSearchChatMessages(chatId: chatId, query: query, filter: nil, fromMessageId: 0, limit: limit)
+        return found.messages.compactMap(model(for:))
+    }
+
+    /// Messages by id, in the order asked: from what's loaded, otherwise from TDLib. Missing ones
+    /// (deleted since) are left out.
+    public func messages(withIds ids: [Int64]) async -> [MessageModel] {
+        let loaded = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [MessageModel] = []
+        for id in ids {
+            if let message = loaded[id] {
+                result.append(message)
+            } else if let message = try? await client.resilientMessage(chatId: chatId, messageId: id), let model = model(for: message) {
+                result.append(model)
+            }
+        }
+        return result
     }
 
     private func rebuildTimeline() {
@@ -354,16 +459,23 @@ public final class ConversationModel {
     // MARK: Viewer
 
     public var viewerMessage: MessageModel? {
-        viewerMessageId.flatMap { id in messages.first { $0.id == id } }
+        viewerMessageId.flatMap { id in viewableMedia.first { $0.id == id } ?? messages.first { $0.id == id } }
     }
 
-    /// This chat's photos and videos, oldest first, to step through in the viewer.
+    /// The photos and videos to step through in the viewer, oldest first: the chat's loaded
+    /// ones, or the shared media panel's when opened from there.
     public var viewableMedia: [MessageModel] {
-        messages.filter(\.isViewableMedia)
+        viewerShowsSharedMedia ? sharedMedia.items(.media).reversed() : messages.filter(\.isViewableMedia)
     }
 
-    public func openViewer(_ message: MessageModel) {
+    public func openViewer(_ message: MessageModel, fromSharedMedia: Bool = false) {
+        viewerShowsSharedMedia = fromSharedMedia
         viewerMessageId = message.id
+    }
+
+    /// Puts the keyboard back in the message box.
+    public func requestFocus() {
+        focusRequest += 1
     }
 
     public func closeViewer() {
@@ -376,6 +488,35 @@ public final class ConversationModel {
         let media = viewableMedia
         guard let index = media.firstIndex(where: { $0.id == viewerMessageId }), media.indices.contains(index + step) else { return }
         viewerMessageId = media[index + step].id
+        // Stepping back through the panel's media: fetch older ones before running out.
+        if viewerShowsSharedMedia, index + step < 5 {
+            Task { await sharedMedia.loadMore(.media) }
+        }
+    }
+
+    // MARK: Transcription
+
+    /// Voice messages and circles you've asked Telegram to transcribe, until its answer arrives.
+    public private(set) var requestedTranscriptions: Set<Int64> = []
+    /// Why Telegram turned a transcription down straight away (no Premium, say).
+    public private(set) var transcriptionErrors: [Int64: String] = [:]
+
+    /// Asks Telegram to transcribe a voice message or circle, as its apps do. The text arrives
+    /// with the message's next updates, partly at first, as Telegram works through it.
+    public func transcribe(_ message: MessageModel) {
+        let id = message.id
+        requestedTranscriptions.insert(id)
+        transcriptionErrors[id] = nil
+        let chatId = chatId
+        let client = client
+        Task {
+            do {
+                _ = try await client.recognizeSpeech(chatId: chatId, messageId: id)
+            } catch {
+                requestedTranscriptions.remove(id)
+                transcriptionErrors[id] = Transcription.describe((error as? TDLibKit.Error)?.message ?? "\(error)")
+            }
+        }
     }
 
     // MARK: Voice messages
@@ -405,6 +546,15 @@ public final class ConversationModel {
 
     public func cancelRecording() {
         recorder.cancel()
+    }
+
+    /// ⌘R: start recording, or send what's been recorded.
+    public func toggleRecording() {
+        switch recorder.state {
+        case .idle: startRecording()
+        case .recording: finishRecording()
+        case .encoding: break
+        }
     }
 
     public func finishRecording() {
@@ -576,6 +726,8 @@ public final class ConversationModel {
     }
 
     /// Esc: stop editing, or stop replying.
+    /// Esc in the message box: drops an edit, a reply or attachments, in that order. False
+    /// when there was nothing to drop.
     public func cancelComposerMode() -> Bool {
         if editing != nil {
             cancelEditing()
@@ -583,6 +735,10 @@ public final class ConversationModel {
         }
         if replyingTo != nil {
             replyingTo = nil
+            return true
+        }
+        if !attachments.isEmpty {
+            attachments.removeAll()
             return true
         }
         return false
@@ -676,6 +832,8 @@ public final class ConversationModel {
             let message = messages[index]
             if let body = body(for: update.newContent, isOutgoing: message.isOutgoing, sender: message.sender) {
                 messages[index].body = body
+                sharedMedia.replaceBody(of: message.id, with: body)
+                if messages[index].transcription != nil { requestedTranscriptions.remove(message.id) }
             } else {
                 messages.remove(at: index)
             }
@@ -721,6 +879,7 @@ public final class ConversationModel {
 
     private func remove(_ ids: [Int64]) {
         let ids = Set(ids)
+        sharedMedia.remove(ids)
         guard messages.contains(where: { ids.contains($0.id) }) else { return }
         messages.removeAll { ids.contains($0.id) }
     }

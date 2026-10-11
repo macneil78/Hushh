@@ -1,3 +1,4 @@
+import HushAI
 import HushCore
 import QuickLook
 import SwiftUI
@@ -9,6 +10,13 @@ struct ConversationView: View {
     let files: FileStore
     let stickers: StickerLibrary
     let chats: ChatStore
+    /// ⌘F's search panel.
+    @Binding var isSearching: Bool
+    /// Esc in the message box with nothing to cancel closes the chat.
+    var onClose: () -> Void = {}
+    @Environment(ModelStore.self) private var models
+    @Environment(\.vault) private var vault
+    @State private var search: ChatSearch?
     @State private var drop: DropState?
     @State private var now = Date.now
     @State private var height: CGFloat = 0
@@ -22,13 +30,33 @@ struct ConversationView: View {
                         ErrorBanner(message: error) { conversation.errorMessage = nil }
                     }
                     if conversation.canPost {
-                        ComposerView(conversation: conversation, stickers: stickers, files: files)
+                        ComposerView(conversation: conversation, stickers: stickers, files: files, onClose: onClose)
                     } else {
                         ChannelFooter()
                     }
                 }
             }
+            .overlay(alignment: .top) {
+                if isSearching, let search {
+                    ChatSearchView(search: search, conversation: conversation) { isSearching = false }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: isSearching)
+            .onChange(of: isSearching, initial: true) { _, isOpen in
+                if isOpen {
+                    if search == nil {
+                        search = ChatSearch(conversation: conversation, models: models, vault: vault)
+                    }
+                    search?.start()
+                } else {
+                    search?.stop()
+                    conversation.requestFocus()
+                }
+            }
+            .onDisappear { search?.stop() }
             .background(MessagesStyle.background)
+            .environment(\.conversation, conversation)
         // Drop files anywhere on the conversation: top half as files, bottom half as photos and videos.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .onDrop(of: [.fileURL], delegate: AttachmentDropDelegate(
@@ -42,7 +70,7 @@ struct ConversationView: View {
         }
         .quickLookPreview($conversation.quickLookURL)
         .navigationTitle(chat.displayTitle)
-        .navigationSubtitle(conversation.typingText ?? subtitle(at: now))
+        .navigationSubtitle(conversation.typingText ?? Self.subtitle(for: chat, chats: chats, at: now))
         // "last seen 5 minutes ago" ages, so refresh it now and then.
         .task {
             while !Task.isCancelled {
@@ -84,7 +112,7 @@ struct ConversationView: View {
 
 extension ConversationView {
     /// Under the chat's name: online or last seen for people, size for groups and channels.
-    private func subtitle(at now: Date) -> String {
+    static func subtitle(for chat: ChatItem, chats: ChatStore, at now: Date = .now) -> String {
         switch chat.kind {
         case .person, .secret:
             return chat.presence?.text(now: now) ?? ""

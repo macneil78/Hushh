@@ -57,9 +57,16 @@ enum ResilientDecoding {
 
 extension TDLibClient {
     /// `getChatHistory`, tolerant of messages TDLibKit can't decode.
-    func resilientChatHistory(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> Messages {
-        let query = GetChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit, offset: 0, onlyLocal: false)
+    func resilientChatHistory(chatId: Int64, fromMessageId: Int64, limit: Int, offset: Int = 0) async throws -> Messages {
+        let query = GetChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit, offset: offset, onlyLocal: false)
         return try await resilientRun(query) { try ResilientDecoding.decode(Messages.self, from: $0, decoder: $1) }
+    }
+
+    /// `getMessage`, tolerant of messages TDLibKit can't decode.
+    func resilientMessage(chatId: Int64, messageId: Int64) async throws -> Message {
+        try await resilientRun(GetMessage(chatId: chatId, messageId: messageId)) {
+            try ResilientDecoding.decode(Message.self, from: $0, decoder: $1)
+        }
     }
 
     /// `getRepliedMessage`, tolerant of messages TDLibKit can't decode.
@@ -71,7 +78,7 @@ extension TDLibClient {
 
     /// Runs a TDLib query like TDLibKit's generated methods do, but reads the reply with the
     /// given (resilient) decoding.
-    private func resilientRun<Query: Codable, Response>(
+    func resilientRun<Query: Codable, Response>(
         _ query: Query,
         decode: @escaping @Sendable (Data, JSONDecoder) throws -> Response
     ) async throws -> Response {

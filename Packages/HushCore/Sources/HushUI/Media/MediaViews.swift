@@ -170,23 +170,31 @@ struct StickerView: View {
     let sticker: StickerMedia
     let files: FileStore
     var size: CGFloat = 160
-    /// Animated stickers play once when they appear (and again on click). The picker shows
-    /// them still, so dozens don't animate at once.
+    /// In chats, animated stickers play once when they appear (and again on click). The picker
+    /// shows each one's still preview and plays only the one under the pointer, as Telegram's
+    /// panel does: building an animation view for every sticker made opening it lag.
     var animates = true
     @State private var replays = 0
+    @State private var isHovering = false
+
+    private var playsAnimation: Bool { animates || isHovering }
 
     var body: some View {
         let view = content
             .frame(width: size, height: size)
             .contentShape(Rectangle())
-            .task(id: sticker.fileId) {
-                if sticker.format != .video { files.download(sticker.fileId) }
+            .task(id: playsAnimation) {
+                // Still previews in the picker don't need the animation file until hovered.
+                if sticker.format != .video, playsAnimation || sticker.format == .image {
+                    files.download(sticker.fileId)
+                }
             }
         if animates, sticker.format == .lottie {
             view.onTapGesture { replays += 1 }
         } else {
-            // No gesture here, so a surrounding button or tap handler (the picker) gets the click.
-            view
+            // No tap gesture here, so a surrounding button or tap handler (the picker) gets the
+            // click; hovering doesn't take clicks.
+            view.onHover { isHovering = $0 }
         }
     }
 
@@ -198,9 +206,9 @@ struct StickerView: View {
                 placeholder
             }
         case .lottie:
-            if let url = handle.localURL {
+            if playsAnimation, let url = handle.localURL {
                 // Lottie draws with an AppKit view, which would swallow clicks meant for SwiftUI.
-                LottieSticker(url: url, animates: animates)
+                LottieSticker(url: url, loops: !animates) { placeholder }
                     .id(replays)
                     .allowsHitTesting(false)
             } else {
@@ -214,7 +222,7 @@ struct StickerView: View {
 
     @ViewBuilder private var placeholder: some View {
         if sticker.thumbnail != nil {
-            RemoteImage(source: sticker.thumbnail, files: files, contentMode: .fit)
+            RemoteImage(source: sticker.thumbnail, files: files, contentMode: .fit, maxPixelSize: Int(size * 2))
         } else {
             Text(sticker.emoji)
                 .font(.system(size: size * 0.5))
@@ -222,21 +230,21 @@ struct StickerView: View {
     }
 }
 
-struct LottieSticker: View {
+/// An animated (.tgs) sticker, parsed off the main thread; its still preview shows meanwhile.
+struct LottieSticker<Placeholder: View>: View {
     let url: URL
-    let animates: Bool
+    var loops = false
+    @ViewBuilder let placeholder: () -> Placeholder
 
     var body: some View {
-        let view = LottieView { try await Self.load(url) }
+        LottieView { try await LottieCache.load(url) } placeholder: { placeholder() }
             .resizable()
-        if animates {
-            view.playing(loopMode: .playOnce)
-        } else {
-            view.paused(at: .progress(0))
-        }
+            .playing(loopMode: loops ? .loop : .playOnce)
     }
+}
 
-    /// Decoded animations, so scrolling back to a sticker doesn't unzip and parse it again.
+/// Decoded animations, so scrolling back to a sticker doesn't unzip and parse it again.
+enum LottieCache {
     nonisolated(unsafe) private static let cache = NSCache<NSURL, LottieAnimation>()
 
     nonisolated static func load(_ url: URL) async throws -> LottieAnimation? {

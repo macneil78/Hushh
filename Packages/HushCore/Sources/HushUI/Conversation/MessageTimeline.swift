@@ -9,6 +9,7 @@ struct MessageTimeline: View {
     @State private var isNearBottom = true
     @State private var isNearTop = false
     @State private var isPaging = false
+    @State private var swipe = SwipeToReply()
 
     var body: some View {
         ScrollView {
@@ -66,6 +67,23 @@ struct MessageTimeline: View {
                 .glassEffect(.regular.interactive(), in: Circle())
                 .padding(16)
             }
+        }
+        .onAppear {
+            swipe.onReply = { [conversation] id in
+                if let message = conversation.messages.first(where: { $0.id == id }) {
+                    conversation.reply(to: message)
+                }
+            }
+            swipe.isEnabled = { [conversation] in
+                conversation.canPost && conversation.viewerMessageId == nil
+            }
+            swipe.start()
+        }
+        .onDisappear { swipe.stop() }
+        // A jump to a message (from search, or Show in Chat): bring it to the middle.
+        .onChange(of: conversation.revealRequest) { _, request in
+            guard let request, let item = conversation.timeline.first(where: { $0.contains(messageId: request.messageId) }) else { return }
+            position.scrollTo(id: item.id, anchor: .center)
         }
         .onChange(of: conversation.isLoadingInitial, initial: true) { _, isLoading in
             // Open at the first unread message rather than the very bottom.
@@ -125,8 +143,10 @@ struct MessageTimeline: View {
                 isGroup: conversation.isGroup,
                 isRead: message.id <= conversation.lastReadOutboxMessageId,
                 isLatest: message.id == conversation.messages.last?.id,
+                isHighlighted: conversation.highlightedMessageId == message.id,
                 conversation: conversation,
-                files: files
+                files: files,
+                swipe: swipe
             )
             .onScrollVisibilityChange(threshold: 0.5) { isVisible in
                 if isVisible {
@@ -143,8 +163,10 @@ struct MessageTimeline: View {
                 isGroup: conversation.isGroup,
                 isRead: (messages.last?.id ?? 0) <= conversation.lastReadOutboxMessageId,
                 isLatest: messages.last?.id == conversation.messages.last?.id,
+                isHighlighted: messages.contains { $0.id == conversation.highlightedMessageId },
                 conversation: conversation,
-                files: files
+                files: files,
+                swipe: swipe
             )
             .onScrollVisibilityChange(threshold: 0.3) { isVisible in
                 for message in messages {

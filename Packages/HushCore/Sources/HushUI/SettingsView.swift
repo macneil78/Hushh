@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 
@@ -20,6 +21,9 @@ struct SettingsView: View {
             }
             Tab("Notifications", systemImage: "bell") {
                 NotificationSettings(preferences: model.notificationPreferences)
+            }
+            Tab("AI", systemImage: "sparkles") {
+                AISettings()
             }
             Tab("About", systemImage: "info.circle") {
                 AboutSettings(model: model)
@@ -99,6 +103,91 @@ struct NotificationSettings: View {
         }
         .formStyle(.grouped)
         .frame(height: 280)
+    }
+}
+
+/// The on-device models: what each does, how big it is, and getting or removing it.
+struct AISettings: View {
+    @Environment(ModelStore.self) private var models
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AIModel.allCases) { model in
+                    row(model)
+                }
+            } footer: {
+                Text("Everything runs on this Mac. Only the models are downloaded, once, from Hugging Face; your messages and recordings never leave it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(height: 300)
+    }
+
+    private func row(_ model: AIModel) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.title)
+                    .font(.headline)
+                Text(model.detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                status(model)
+                    .font(.caption)
+                    .padding(.top, 2)
+            }
+            Spacer(minLength: 8)
+            action(model)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private func status(_ model: AIModel) -> some View {
+        switch models.state(of: model) {
+        case .missing:
+            Text(model.downloadSize.formatted(.byteCount(style: .file)))
+                .foregroundStyle(.secondary)
+        case .downloading(let fraction):
+            ProgressView(value: fraction) {
+                Text("Downloading… \(Int(fraction * 100))%")
+            }
+            .progressViewStyle(.linear)
+            .frame(maxWidth: 220)
+        case .preparing:
+            Text("Preparing it for this Mac… the first time takes a couple of minutes.")
+                .foregroundStyle(.secondary)
+        case .ready:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed(let reason):
+            Text(reason)
+                .foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder private func action(_ model: AIModel) -> some View {
+        switch models.state(of: model) {
+        case .missing:
+            Button("Download") { models.download(model) }
+        case .failed:
+            Button("Try Again") { models.download(model) }
+        case .downloading:
+            Button("Cancel") { models.cancelDownload(model) }
+        case .preparing:
+            ProgressView().controlSize(.small)
+        case .ready:
+            Button("Delete", role: .destructive) {
+                Task { await models.delete(model) }
+            }
+        }
     }
 }
 

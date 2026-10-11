@@ -27,6 +27,8 @@ public final class AppModel {
     public let voice = VoicePlayback()
     public let notificationPreferences = NotificationPreferences()
     public private(set) var currentUser: CurrentUser?
+    /// Where this account's transcripts and search indexes are kept, encrypted. Nil until logged in.
+    public private(set) var vault: LocalVault?
     /// The chat open in the window, if any.
     public private(set) var conversation: ConversationModel?
     /// Set by the UI: shows a chat in the window, reopening the window if it was closed.
@@ -156,6 +158,9 @@ public final class AppModel {
         )
         setOnline(NSApp.isActive)
         Task { await keepCallsAndSecretChatsOnPhone(client) }
+        if let key = try? DatabaseKey.loadOrCreate() {
+            vault = LocalVault(directory: configuration.accountDirectory(for: me.id).appending(path: "ai", directoryHint: .isDirectory), databaseKey: key)
+        }
         let settingsFile = configuration.accountDirectory(for: me.id).appending(path: "visibility.json")
         chats.attach(client: client, myUserId: me.id, settingsFile: settingsFile)
         // After your visibility choices are loaded, so hidden chats are filtered from the start.
@@ -183,6 +188,7 @@ public final class AppModel {
     private func sessionDidClose() {
         session = nil
         currentUser = nil
+        vault = nil
         conversation = nil
         notifications.reset()
         voice.stop()

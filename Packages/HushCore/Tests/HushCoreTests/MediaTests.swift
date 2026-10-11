@@ -48,6 +48,13 @@ struct MediaMappingTests {
         #expect(chosen?.image.fileId == 3)
     }
 
+    @Test func gridTilesUseTheSmallPreview() {
+        let chosen = MediaMapping.photo(photo([(1, 90, 60), (2, 320, 213), (3, 800, 533), (4, 1280, 853)]))
+        #expect(chosen?.thumbnail.fileId == 2)
+        // A photo with no small size uses the bubble's.
+        #expect(MediaMapping.photo(photo([(3, 800, 533)]))?.thumbnail.fileId == 3)
+    }
+
     @Test func fallsBackToTheLargestSize() {
         let chosen = MediaMapping.photo(photo([(1, 90, 60), (2, 320, 213)]))
         #expect(chosen?.image.fileId == 2)

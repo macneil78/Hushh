@@ -5,12 +5,15 @@ import UniformTypeIdentifiers
 
 /// Where you write, as in Messages: a + button for photos, files, stickers and voice, and a
 /// glass message field floating over the conversation. Replies, edits and attachments show inside
-/// the field. Enter sends, Shift+Enter starts a new line, ↑ edits your last message, Esc cancels
-/// a reply or edit. Files can also be pasted or dropped onto the conversation.
+/// the field. Enter sends, Shift+Enter starts a new line, ↑ edits your last message, Esc drops a
+/// reply, edit or attachments and otherwise closes the chat, ⌘R records a voice message. Files
+/// can also be pasted or dropped onto the conversation.
 struct ComposerView: View {
     @Bindable var conversation: ConversationModel
     let stickers: StickerLibrary
     let files: FileStore
+    /// Esc with nothing to cancel closes the chat.
+    var onClose: () -> Void = {}
     @State private var editorHeight: CGFloat = 30
     @State private var isPickingFiles = false
     @State private var isPickingSticker = false
@@ -71,7 +74,18 @@ struct ComposerView: View {
         .fileImporter(isPresented: $isPickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { conversation.attach(urls) }
         }
-        .popover(isPresented: $isPickingSticker, arrowEdge: .top) {
+    }
+
+    private var stickerButton: some View {
+        Button("Stickers and GIFs", systemImage: "face.smiling") { isPickingSticker.toggle() }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .font(.system(size: 16))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .help("Stickers and GIFs")
+            .disabled(isEditing)
+            .popover(isPresented: $isPickingSticker, arrowEdge: .top) {
             StickerPicker(
                 library: stickers,
                 files: files,
@@ -95,7 +109,10 @@ struct ComposerView: View {
                 focusRequest: conversation.focusRequest,
                 onSubmit: conversation.send,
                 onUpArrowInEmptyComposer: conversation.editLastMessage,
-                onEscape: conversation.cancelComposerMode,
+                onEscape: {
+                    if !conversation.cancelComposerMode() { onClose() }
+                    return true
+                },
                 onTextChange: conversation.composerChanged,
                 onPasteFiles: { conversation.attach($0) }
             )
@@ -109,6 +126,8 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
+            stickerButton
+                .padding(.bottom, 3)
             trailingButton
                 .padding(.bottom, 3)
         }

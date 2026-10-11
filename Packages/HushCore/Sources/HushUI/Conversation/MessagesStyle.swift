@@ -5,7 +5,12 @@ import SwiftUI
 /// The look of the Mac's Messages app: blue bubbles for you, grey for them, tails on the last
 /// bubble of a run, plain background, timestamps between bursts.
 enum MessagesStyle {
-    static let outgoing = Color(nsColor: .systemBlue)
+    /// A muted blue: calmer than the system blue, still readable with white text.
+    static let outgoing = Color(nsColor: NSColor(name: "HushhOutgoingBubble") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.243, green: 0.369, blue: 0.541, alpha: 1)  // #3E5E8A
+            : NSColor(srgbRed: 0.310, green: 0.463, blue: 0.659, alpha: 1)  // #4F76A8
+    })
     static let incoming = Color(nsColor: NSColor(name: "HushhIncomingBubble") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.231, green: 0.231, blue: 0.239, alpha: 1)

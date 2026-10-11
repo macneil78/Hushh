@@ -13,6 +13,8 @@ public struct PhotoMedia: Equatable, Sendable {
     public let image: ImageSource
     /// Full resolution, for the viewer.
     public let largest: ImageSource
+    /// Small enough for a grid tile (about 320 pixels), as Telegram's shared media uses.
+    public let thumbnail: ImageSource
     /// A tiny, blurry JPEG to show until the image downloads.
     public let minithumbnail: Data?
 }
@@ -37,6 +39,29 @@ public struct VideoNoteMedia: Equatable, Sendable {
     public let duration: Int
     public let thumbnail: ImageSource?
     public let minithumbnail: Data?
+    /// Telegram's transcription, once asked for.
+    public var transcription: Transcription?
+}
+
+/// Telegram's transcription of a voice message or circle, done on its servers when you ask, as
+/// in its own apps. Accounts without Premium get a few a week.
+public enum Transcription: Equatable, Sendable {
+    /// Under way: Telegram sends the text as it goes.
+    case pending(String)
+    case done(String)
+    case failed(String)
+
+    /// What to say when Telegram can't transcribe.
+    public static func describe(_ error: String) -> String {
+        let upper = error.uppercased()
+        if upper.contains("PREMIUM") || upper.contains("TRIAL") || upper.contains("FLOOD") {
+            return "Telegram transcribes this with Premium, or a few times a week for free; none are left right now."
+        }
+        if upper.contains("TOO_LONG") {
+            return "Too long to transcribe without Telegram Premium."
+        }
+        return "Telegram couldn't transcribe this one."
+    }
 }
 
 public struct VoiceNoteMedia: Equatable, Sendable {
@@ -47,6 +72,8 @@ public struct VoiceNoteMedia: Equatable, Sendable {
     public let waveform: [UInt8]
     /// Whether the voice message has been played (yours: by the other side).
     public var isListened: Bool
+    /// Telegram's transcription, once asked for.
+    public var transcription: Transcription?
 }
 
 public struct StickerMedia: Equatable, Sendable, Identifiable {
@@ -82,9 +109,11 @@ enum MediaMapping {
         let sizes = photo.sizes.sorted { $0.width * $0.height < $1.width * $1.height }
         guard let size = sizes.first(where: { max($0.width, $0.height) >= 800 }) ?? sizes.last,
               let largest = sizes.last else { return nil }
+        let small = sizes.first { max($0.width, $0.height) >= 320 } ?? size
         return PhotoMedia(
             image: ImageSource(fileId: size.photo.id, width: size.width, height: size.height),
             largest: ImageSource(fileId: largest.photo.id, width: largest.width, height: largest.height),
+            thumbnail: ImageSource(fileId: small.photo.id, width: small.width, height: small.height),
             minithumbnail: photo.minithumbnail?.data
         )
     }
@@ -120,7 +149,8 @@ enum MediaMapping {
             fileId: note.video.id,
             duration: note.duration,
             thumbnail: image(note.thumbnail),
-            minithumbnail: note.minithumbnail?.data
+            minithumbnail: note.minithumbnail?.data,
+            transcription: transcription(note.speechRecognitionResult)
         )
     }
 
@@ -129,8 +159,18 @@ enum MediaMapping {
             fileId: note.voice.id,
             duration: note.duration,
             waveform: Array(Waveform.unpack(note.waveform).prefix(Waveform.barCount)),
-            isListened: isListened
+            isListened: isListened,
+            transcription: transcription(note.speechRecognitionResult)
         )
+    }
+
+    static func transcription(_ result: SpeechRecognitionResult?) -> Transcription? {
+        switch result {
+        case .speechRecognitionResultPending(let pending): .pending(pending.partialText)
+        case .speechRecognitionResultText(let text): .done(text.text)
+        case .speechRecognitionResultError(let failure): .failed(Transcription.describe(failure.error.message))
+        case nil: nil
+        }
     }
 
     static func sticker(_ sticker: Sticker) -> StickerMedia {

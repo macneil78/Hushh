@@ -11,8 +11,12 @@ struct MessageRow: View {
     let isRead: Bool
     /// Whether this is your latest message with nothing after it, which shows "Delivered" or "Read".
     let isLatest: Bool
+    /// Just jumped to: flashes for a moment.
+    var isHighlighted = false
     let conversation: ConversationModel
     let files: FileStore
+    /// Swipe left to reply; nil where there's nothing to reply in.
+    var swipe: SwipeToReply?
     @State private var isPickingReaction = false
 
     var body: some View {
@@ -34,6 +38,8 @@ struct MessageRow: View {
                 reactions: message.reactions,
                 canReact: !conversation.reactionChoices.isEmpty,
                 files: files,
+                swipe: swipe,
+                isHighlighted: isHighlighted,
                 onTapback: { isPickingReaction = true }
             ) {
                 MessageBubble(
@@ -130,6 +136,11 @@ struct MessageChrome<Bubble: View>: View {
     let reactions: [Reaction]
     let canReact: Bool
     let files: FileStore
+    var swipe: SwipeToReply?
+    /// Shows the time without hovering (for the design preview).
+    var revealsTime = false
+    /// Just jumped to: the row flashes.
+    var isHighlighted = false
     /// Opens the reaction picker.
     let onTapback: () -> Void
     @ViewBuilder let bubble: Bubble
@@ -174,6 +185,20 @@ struct MessageChrome<Bubble: View>: View {
                         }
                     if !isOutgoing { reactButton }
                 }
+                // The time, while the pointer is over the message: beside it, toward the middle
+                // of the window, without moving anything.
+                .overlay(alignment: isOutgoing ? .leading : .trailing) {
+                    Text(lead.date.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(width: 64, alignment: isOutgoing ? .trailing : .leading)
+                        .offset(x: isOutgoing ? -70 : 70)
+                        .opacity(isHovering || revealsTime ? 1 : 0)
+                        .allowsHitTesting(false)
+                }
+                .modifier(SwipeReplyArrow(id: lead.id, swipe: swipe))
             }
             .frame(maxWidth: MessagesStyle.maxBubbleWidth + (showsSender ? Self.avatarSlot : 0), alignment: isOutgoing ? .trailing : .leading)
             if isEdited || delivery != nil {
@@ -189,6 +214,14 @@ struct MessageChrome<Bubble: View>: View {
         // Bubbles never reach the far side of the window.
         .padding(isOutgoing ? .leading : .trailing, 60)
         .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
+        .modifier(SwipeOffset(id: lead.id, swipe: swipe))
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.accentColor.opacity(isHighlighted ? 0.16 : 0))
+                .padding(.horizontal, -8)
+                .padding(.vertical, -3)
+                .animation(.easeOut(duration: isHighlighted ? 0.15 : 0.8), value: isHighlighted)
+        }
         .padding(.top, (isFirstInGroup ? 10 : 2) + (reactions.isEmpty ? 0 : 14))
         .onHover { isHovering = $0 }
     }
@@ -295,6 +328,9 @@ struct MessageBubble: View {
                     .background(MessagesStyle.incoming, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             content
+            if case .videoNote = message.body {
+                TranscriptText(message: message, inBubble: true)
+            }
         }
         .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
     }
@@ -309,6 +345,9 @@ struct MessageBubble: View {
             VideoView(video: video, files: files, onOpen: onOpenMedia, cornerRadius: MessagesStyle.cornerRadius)
         case .videoNote(let note):
             VideoNoteView(note: note, files: files)
+                .overlay(alignment: .bottomTrailing) {
+                    TranscribeButton(message: message)
+                }
         case .sticker(let sticker):
             StickerView(sticker: sticker, files: files)
         case .document(let document, let caption):
@@ -319,8 +358,12 @@ struct MessageBubble: View {
         case .voiceNote(let note, let caption):
             VStack(alignment: .leading, spacing: 6) {
                 if let voice {
-                    VoiceNoteView(messageId: message.id, note: note, isOutgoing: isOutgoing, files: files, voice: voice, onPlay: onPlayVoice)
+                    HStack(spacing: 8) {
+                        VoiceNoteView(messageId: message.id, note: note, isOutgoing: isOutgoing, files: files, voice: voice, onPlay: onPlayVoice)
+                        TranscribeButton(message: message, onAccent: isOutgoing)
+                    }
                 }
+                TranscriptText(message: message)
                 if !caption.isEmpty { richText(caption) }
             }
         case .media(let label, let systemImage, let caption):

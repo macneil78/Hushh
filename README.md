@@ -57,6 +57,22 @@ In the message box:
   switch to it first.
 - Drag a photo, video or file out of a chat into Finder or another app for a copy.
 
+## Transcription and search
+
+- **Transcription**: the text button on a voice message or circle asks Telegram to transcribe it,
+  as its own apps do; the text appears as Telegram works through it. Telegram does this on its
+  servers, with Premium or a few free transcriptions a week.
+- **Find in Chat (⌘F)**: Telegram's word search across the whole history, plus search by meaning
+  that runs on this Mac (Apple silicon) with
+  [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) through
+  [swift-embeddings](https://github.com/jkrukowski/swift-embeddings). Settings → AI downloads the
+  model once (490 MB); messages never leave the Mac. Each chat is indexed in the background the
+  first time you search it (newest first, up to 10,000 messages, paced so the Mac stays smooth),
+  then kept current. ↑/↓ choose a result, Enter jumps to it.
+
+Search indexes are kept per account under `accounts/<id>/ai/`, encrypted with a key derived from
+the database key in the keychain. The model lives in `Application Support/Hush/Models`.
+
 ## Develop
 
 - All code lives in `Packages/HushCore`:
@@ -74,6 +90,8 @@ In the message box:
 
 - `swift run hush-smoke` checks that TDLib loads on this Mac. It needs no credentials.
 - `swift scripts/make-icon.swift` (from the repository root) redraws the app icon.
+- `HUSH_MODEL_TESTS=1 swift test --filter ModelTests` runs search by meaning with the real model
+  (downloads about 490 MB into `~/Library/Caches/HushModelTests` the first time).
 - `HUSH_PREVIEW_DIR=/tmp/hushh-preview swift test --filter DesignPreviewTests` draws a made-up
   conversation and sidebar with the real views, in light and dark mode, as PNGs.
 - TDLib's log (errors only) is written to `~/Library/Containers/com.macneil.Hush/Data/Library/Application Support/Hush/tdlib/tdlib.log`.
@@ -90,5 +108,6 @@ Bump TDLib every couple of months:
 ## License
 
 MIT, see [LICENSE](LICENSE). Hushh builds on [TDLib](https://github.com/tdlib/td) (Boost Software
-License), [TDLibKit](https://github.com/Swiftgram/TDLibKit) (MIT) and
-[Lottie](https://github.com/airbnb/lottie-spm) (Apache 2.0).
+License), [TDLibKit](https://github.com/Swiftgram/TDLibKit) (MIT),
+[Lottie](https://github.com/airbnb/lottie-spm) (Apache 2.0) and swift-embeddings (MIT). The search
+model it can download, multilingual-e5, is MIT-licensed.

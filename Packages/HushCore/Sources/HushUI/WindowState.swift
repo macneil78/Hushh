@@ -9,6 +9,10 @@ final class WindowState {
     var isChoosingChats = false
     var isConfirmingLogOut = false
     var isSwitchingChats = false
+    /// The chat's info and shared media, shown in place of the conversation.
+    var showsChatDetails = false
+    /// ⌘F: the search panel over the conversation.
+    var isSearchingChat = false
 
     /// Forget everything when the account logs out.
     func reset() {
@@ -18,5 +22,7 @@ final class WindowState {
         isChoosingChats = false
         isConfirmingLogOut = false
         isSwitchingChats = false
+        showsChatDetails = false
+        isSearchingChat = false
     }
 }

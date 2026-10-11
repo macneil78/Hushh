@@ -11,6 +11,15 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
     /// Photos, videos or files sent together, shown as one bubble.
     case album([MessageModel], isFirstInGroup: Bool, isLastInGroup: Bool)
 
+    /// Whether this row shows the message (on its own, or in an album).
+    public func contains(messageId: Int64) -> Bool {
+        switch self {
+        case .message(let message, _, _): message.id == messageId
+        case .album(let messages, _, _): messages.contains { $0.id == messageId }
+        case .timestamp, .unreadDivider: false
+        }
+    }
+
     public var id: String {
         switch self {
         case .timestamp(let date): "time-\(Int(date.timeIntervalSince1970))"

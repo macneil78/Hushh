@@ -16,6 +16,7 @@ struct DesignPreviewTests {
     func conversationAndSidebar(scheme: ColorScheme) throws {
         let conversation = render(SampleConversation(), width: 640, scheme: scheme)
         let sidebar = render(SampleSidebar(), width: 300, scheme: scheme)
+        let details = render(SampleDetails(), width: 320, scheme: scheme)
         #expect((conversation?.size.height ?? 0) > 300)
         #expect((sidebar?.size.height ?? 0) > 200)
         guard let folder = ProcessInfo.processInfo.environment["HUSH_PREVIEW_DIR"] else { return }
@@ -24,6 +25,7 @@ struct DesignPreviewTests {
         let suffix = scheme == .dark ? "dark" : "light"
         try png(conversation).write(to: directory.appending(path: "conversation-\(suffix).png"))
         try png(sidebar).write(to: directory.appending(path: "sidebar-\(suffix).png"))
+        try png(details).write(to: directory.appending(path: "details-\(suffix).png"))
     }
 
     private func render(_ view: some View, width: CGFloat, scheme: ColorScheme) -> NSImage? {
@@ -87,7 +89,7 @@ private struct SampleConversation: View {
         VStack(spacing: 0) {
             TimestampHeading(date: Sample.now)
             row(Sample.message(1, "Hey! Are we still on for tonight?", from: Sample.anna, minutes: 0), first: true, last: false)
-            row(Sample.message(2, "I booked a table at 8 🍝", from: Sample.anna, minutes: 1), first: false, last: true)
+            row(Sample.message(2, "I booked a table at 8 🍝", from: Sample.anna, minutes: 1), first: false, last: true, hovered: true)
             row(Sample.message(3, "Yes! See you there", from: Sample.me, minutes: 2, reactions: [Reaction(kind: .emoji("❤️"), count: 1, isChosen: false)]), first: true, last: false)
             row(Sample.message(
                 4,
@@ -104,11 +106,11 @@ private struct SampleConversation: View {
                 reply: ReplyPreview(senderName: "You", text: "Can you send me the address?"),
                 reactions: [Reaction(kind: .emoji("\u{2764}"), count: 1, isChosen: true)]  // Telegram's bare heart
             ), first: true, last: true)
-            row(Sample.message(6, "Perfect, thanks!", from: Sample.me, minutes: 4), first: true, last: true, isLatest: true)
+            row(Sample.message(6, "Perfect, thanks!", from: Sample.me, minutes: 4), first: true, last: true, isLatest: true, hovered: true)
             TimestampHeading(date: Sample.now + 3 * 3600)
             row(Sample.message(7, "Who's bringing the speaker?", from: Sample.max, minutes: 180), first: true, last: true, isGroup: true)
             row(Sample.message(8, "I can", from: Sample.anna, minutes: 181), first: true, last: false, isGroup: true)
-            row(Sample.message(9, "It's charged 🔋", from: Sample.anna, minutes: 181.5), first: false, last: true, isGroup: true)
+            row(Sample.message(9, "It's charged 🔋", from: Sample.anna, minutes: 181.5), first: false, last: true, isGroup: true, hovered: true)
             row(Sample.message(10, "This one didn't go through", from: Sample.me, minutes: 182, status: .failed("No connection")), first: true, last: true)
             TypingBubble()
         }
@@ -117,7 +119,7 @@ private struct SampleConversation: View {
         .background(MessagesStyle.background)
     }
 
-    private func row(_ message: MessageModel, first: Bool, last: Bool, isGroup: Bool = false, isLatest: Bool = false) -> some View {
+    private func row(_ message: MessageModel, first: Bool, last: Bool, isGroup: Bool = false, isLatest: Bool = false, hovered: Bool = false) -> some View {
         MessageChrome(
             lead: message,
             isFirstInGroup: first,
@@ -129,6 +131,7 @@ private struct SampleConversation: View {
             // The react button only shows on hover, and the renderer can't draw its glass.
             canReact: false,
             files: files,
+            revealsTime: hovered,
             onTapback: {}
         ) {
             MessageBubble(message: message, hasTail: last, files: files, onOpen: { _ in })
@@ -157,5 +160,45 @@ private struct SampleSidebar: View {
         ChatRowLayout(title: name, preview: Text(preview), date: date, unread: unread, isMuted: muted, isPinned: pinned, isChannel: channel) {
             Avatar(title: name, accentColorId: accent, photoFileId: nil, files: files, size: 40)
         }
+    }
+}
+
+/// The details panel's lists: a month of media tiles, then links.
+private struct SampleDetails: View {
+    private let files = FileStore()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("October 2026")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 2)], spacing: 2) {
+                ForEach(1...5, id: \.self) { id in
+                    MediaThumbnail(message: Sample.message(Int64(id), "", from: Sample.anna, minutes: 0), files: files)
+                }
+            }
+            .padding(.horizontal, 2)
+            Text("September 2026")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+            link(1, "https://www.github.com/tdlib/td", "Worth reading before we bump TDLib: https://www.github.com/tdlib/td")
+            Divider().padding(.leading, 12)
+            link(2, "https://t.me/hushh", "https://t.me/hushh")
+        }
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func link(_ id: Int64, _ address: String, _ text: String) -> some View {
+        let url = URL(string: address)!
+        let start = (text as NSString).range(of: address).location
+        var message = Sample.message(id, text, from: Sample.max, minutes: -Double(id) * 60 * 24 * 20)
+        message.body = .text(RichText(text: text, spans: [.init(range: start..<(start + address.utf16.count), style: .link(url))]))
+        return LinkRow(message: message)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
     }
 }
