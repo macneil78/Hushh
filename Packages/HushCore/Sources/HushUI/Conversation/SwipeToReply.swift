@@ -176,9 +176,20 @@ struct SwipeReplyArrow: ViewModifier {
                     .background(progress >= 1 ? AnyShapeStyle(MessagesStyle.outgoing) : AnyShapeStyle(.quaternary), in: Circle())
                     .scaleEffect(0.5 + 0.5 * progress)
                     .opacity(progress)
-                    .offset(x: 24)
+                    .offset(x: 30)
                     .allowsHitTesting(false)
             }
         }
+    }
+}
+
+/// Hover details (the react button, the time) step aside while a message is swiped, so the reply
+/// arrow has the space by the bubble to itself.
+struct HiddenWhileSwiping: ViewModifier {
+    let id: Int64
+    let swipe: SwipeToReply?
+
+    func body(content: Content) -> some View {
+        content.opacity(swipe?.offset(for: id) ?? 0 == 0 ? 1 : 0)
     }
 }

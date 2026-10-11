@@ -184,6 +184,8 @@ struct MessageChrome<Bubble: View>: View {
                                     .offset(x: isOutgoing ? -14 : 14, y: -17)
                             }
                         }
+                        // Right at the bubble's edge, where the react button and time give way.
+                        .modifier(SwipeReplyArrow(id: lead.id, swipe: swipe))
                     if !isOutgoing { reactButton }
                 }
                 // The time, while the pointer is over the message: beside it, toward the middle
@@ -197,9 +199,9 @@ struct MessageChrome<Bubble: View>: View {
                         .frame(width: 64, alignment: isOutgoing ? .trailing : .leading)
                         .offset(x: isOutgoing ? -70 : 70)
                         .opacity(isHovering || revealsTime ? 1 : 0)
+                        .modifier(HiddenWhileSwiping(id: lead.id, swipe: swipe))
                         .allowsHitTesting(false)
                 }
-                .modifier(SwipeReplyArrow(id: lead.id, swipe: swipe))
             }
             .frame(maxWidth: MessagesStyle.maxBubbleWidth + (showsSender ? Self.avatarSlot : 0), alignment: isOutgoing ? .trailing : .leading)
             if isEdited || delivery != nil {
@@ -239,6 +241,7 @@ struct MessageChrome<Bubble: View>: View {
                 .glassEffect(.regular.interactive(), in: Circle())
                 .help("React")
                 .opacity(isHovering ? 1 : 0)
+                .modifier(HiddenWhileSwiping(id: lead.id, swipe: swipe))
         }
     }
 }
