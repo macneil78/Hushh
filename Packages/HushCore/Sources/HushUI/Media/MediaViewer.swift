@@ -207,7 +207,7 @@ struct ViewerVideo: View {
                         .allowsHitTesting(false)
                         .aspectRatio(CGFloat(max(video.width, 1)) / CGFloat(max(video.height, 1)), contentMode: .fit)
                 } else {
-                    VideoPlayer(player: player)
+                    PlayerView(player: player)
                         .task(id: url) {
                             let player = AVPlayer(url: url)
                             self.player = player
@@ -225,5 +225,31 @@ struct ViewerVideo: View {
                 .task(id: video.fileId) { files.download(video.fileId, priority: 32) }
             }
         }
+    }
+}
+
+/// AppKit's video player with its usual controls. SwiftUI's `VideoPlayer` crashed Hushh on
+/// macOS 27: it subclasses `AVPlayerView`, but nothing in Hushh used AVKit directly, so the
+/// linker left AVKit out and the class was missing at runtime. Using `AVPlayerView` here keeps
+/// AVKit linked, and drops the SwiftUI layer altogether.
+struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer?
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .floating
+        view.showsFullScreenToggleButton = true
+        view.allowsPictureInPicturePlayback = true
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
+        view.player?.pause()
+        view.player = nil
     }
 }
