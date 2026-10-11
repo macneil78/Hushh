@@ -2,6 +2,11 @@ import AppKit
 import HushCore
 import SwiftUI
 
+extension EnvironmentValues {
+    /// Hovering a message shows its time and a react button; off for the screenshot demo.
+    @Entry var showsHoverDetails = true
+}
+
 /// The look of the Mac's Messages app: blue bubbles for you, grey for them, tails on the last
 /// bubble of a run, plain background, timestamps between bursts.
 enum MessagesStyle {

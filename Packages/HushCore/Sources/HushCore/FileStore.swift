@@ -19,6 +19,8 @@ public final class FileHandle {
 /// Downloads TDLib files on demand and tracks where they land on disk.
 @MainActor
 public final class FileStore {
+    public init() {}
+
     private var handles: [Int: FileHandle] = [:]
     private var requested: Set<Int> = []
     private var client: TDLibClient?
@@ -31,6 +33,11 @@ public final class FileStore {
     }
 
     /// Starts downloading the file unless it's already on disk or on its way. Safe to call repeatedly.
+    /// A file that's already on disk (the demo window's photo and voice message).
+    public func provide(_ url: URL, for id: Int) {
+        handle(for: id).localURL = url
+    }
+
     public func download(_ id: Int, priority: Int = 1) {
         guard let client, handle(for: id).localURL == nil, requested.insert(id).inserted else { return }
         Task {

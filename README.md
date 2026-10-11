@@ -4,6 +4,10 @@ A calm macOS client for Telegram: your friends' chats, without stories, channels
 Unofficial client using the Telegram API, built on [TDLib](https://github.com/tdlib/td) through
 [TDLibKit](https://github.com/Swiftgram/TDLibKit).
 
+![Hushh in dark mode: a chat list of people only, and a conversation with a photo, a voice message and its transcript](docs/screenshot.png)
+
+<sub>Made-up chats, from Hushh's demo mode (`scripts/demo.sh`).</sub>
+
 | Chat | Shown? |
 |---|---|
 | People, Saved Messages | Yes, unless you hide one |
@@ -90,6 +94,8 @@ the database key in the keychain. The model lives in `Application Support/Hush/M
 
 - `swift run hush-smoke` checks that TDLib loads on this Mac. It needs no credentials.
 - `swift scripts/make-icon.swift` (from the repository root) redraws the app icon.
+- `scripts/demo.sh [--dark|--light]` opens Hushh with made-up chats, for screenshots: it never logs in to
+  Telegram. Press ⌘⇧4, Space and click the window to capture it.
 - `HUSH_MODEL_TESTS=1 swift test --filter ModelTests` runs search by meaning with the real model
   (downloads about 490 MB into `~/Library/Caches/HushModelTests` the first time).
 - `HUSH_PREVIEW_DIR=/tmp/hushh-preview swift test --filter DesignPreviewTests` draws a made-up

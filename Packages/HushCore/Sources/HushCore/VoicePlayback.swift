@@ -5,6 +5,8 @@ import Observation
 /// Plays one voice message at a time. Starting another stops the current one.
 @MainActor @Observable
 public final class VoicePlayback {
+    public init() {}
+
     /// The message playing or paused, if any.
     public private(set) var messageId: Int64?
     public private(set) var isPlaying = false

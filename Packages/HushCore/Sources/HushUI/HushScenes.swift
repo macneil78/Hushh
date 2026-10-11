@@ -20,10 +20,16 @@ public struct HushScenes: Scene {
     public var body: some Scene {
         // One window, like Signal. Closing it keeps Hush running so messages keep arriving.
         Window("Hushh", id: Self.mainWindowId) {
-            RootView(model: model, window: window)
-                .environment(models)
-                .frame(minWidth: 760, minHeight: 520)
-                .task { model.start() }
+            if DemoWindow.isEnabled {
+                // Made-up chats for screenshots; Telegram is never touched.
+                DemoWindow()
+                    .frame(width: 1080, height: 700)
+            } else {
+                RootView(model: model, window: window)
+                    .environment(models)
+                    .frame(minWidth: 760, minHeight: 520)
+                    .task { model.start() }
+            }
         }
         .commands {
             HushCommands(model: model, window: window)

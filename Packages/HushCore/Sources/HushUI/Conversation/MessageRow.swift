@@ -144,6 +144,7 @@ struct MessageChrome<Bubble: View>: View {
     /// Opens the reaction picker.
     let onTapback: () -> Void
     @ViewBuilder let bubble: Bubble
+    @Environment(\.showsHoverDetails) private var showsHoverDetails
     @State private var isHovering = false
 
     private static var avatarSlot: CGFloat { SenderAvatarSlot.size + 8 }
@@ -223,7 +224,7 @@ struct MessageChrome<Bubble: View>: View {
                 .animation(.easeOut(duration: isHighlighted ? 0.15 : 0.8), value: isHighlighted)
         }
         .padding(.top, (isFirstInGroup ? 10 : 2) + (reactions.isEmpty ? 0 : 14))
-        .onHover { isHovering = $0 }
+        .onHover { isHovering = $0 && showsHoverDetails }
     }
 
     /// Shown while the pointer is over the message; always takes its space, so nothing shifts.
