@@ -97,9 +97,19 @@ struct MessageTimeline: View {
             position.scrollTo(id: item.id, anchor: .center)
         }
         .onChange(of: conversation.isLoadingInitial, initial: true) { _, isLoading in
+            guard !isLoading else { return }
             // Open at the first unread message rather than the very bottom.
-            if !isLoading, conversation.firstUnreadMessageId != nil {
+            if conversation.firstUnreadMessageId != nil {
                 position.scrollTo(id: TimelineItem.unreadDivider.id, anchor: .top)
+            } else {
+                // The lazy stack estimates the rows it hasn't drawn yet, so a very long message
+                // just above the bottom can leave the default anchor short of it. Go to the
+                // bottom once the first page is in, and again once those rows are measured.
+                position.scrollTo(edge: .bottom)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    position.scrollTo(edge: .bottom)
+                }
             }
         }
         .onChange(of: conversation.messages.last?.id) { previousLastId, _ in
