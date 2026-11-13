@@ -12,10 +12,14 @@ CODE_SIGN_STYLE = Automatic
 CODE_SIGN_IDENTITY = -
 DEVELOPMENT_TEAM =
 
-// The hardened runtime only loads frameworks signed by the app's own team. A "Sign to Run Locally"
-// build has no team, so it would refuse to launch with Lottie embedded. Secrets.xcconfig turns
-// it on together with your team.
-ENABLE_HARDENED_RUNTIME = NO
+// The hardened runtime stops other processes from injecting code (DYLD_INSERT_LIBRARIES) or
+// attaching a debugger, which would get the database key and the Telegram session. A "Sign to
+// Run Locally" build has no team, so the entitlement com.apple.security.cs.disable-library-validation
+// (project.yml) lets it load its own embedded frameworks.
+ENABLE_HARDENED_RUNTIME = YES
+// Xcode adds get-task-allow (a debugger may attach) to every build it signs. Debug keeps it for
+// Xcode's debugger; Release, the build scripts/install.sh installs, must not have it.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
 
 HUSH_API_ID =
 HUSH_API_HASH =

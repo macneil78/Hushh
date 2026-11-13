@@ -102,7 +102,10 @@ struct ChatDetailsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         if items.isEmpty {
-            if media.hasMore(kind) {
+            if media.didFail(kind) {
+                retry
+                    .padding(40)
+            } else if media.hasMore(kind) {
                 ProgressView()
                     .padding(40)
             } else {
@@ -127,7 +130,11 @@ struct ChatDetailsView: View {
                     }
                 }
             }
-            if media.hasMore(kind) {
+            if media.didFail(kind) {
+                retry
+                    .frame(maxWidth: .infinity)
+                    .padding(16)
+            } else if media.hasMore(kind) {
                 // At the end of what's loaded, fetch the next page, and again while this
                 // stays in view (a page that doesn't fill the window).
                 ProgressView()
@@ -137,6 +144,17 @@ struct ChatDetailsView: View {
                     .task(id: items.count) {
                         await media.loadMore(kind)
                     }
+            }
+        }
+    }
+
+    /// A page that didn't load: say so, and offer to try again.
+    private var retry: some View {
+        VStack(spacing: 8) {
+            Text("Couldn't load \(kind.title.lowercased()).")
+                .foregroundStyle(.secondary)
+            Button("Try Again") {
+                Task { await media.loadMore(kind) }
             }
         }
     }
@@ -169,7 +187,8 @@ struct ChatDetailsView: View {
                                 isOutgoing: false,
                                 files: files,
                                 voice: conversation.voice,
-                                onPlay: { conversation.playVoiceNote(message, url: $0) }
+                                onPlay: { conversation.playVoiceNote(message, url: $0) },
+                                isOwnMessage: message.isOutgoing
                             )
                             TranscribeButton(message: message)
                         }
@@ -202,7 +221,11 @@ struct ChatDetailsView: View {
     @ViewBuilder private func menu(for message: MessageModel) -> some View {
         Button("Show in Chat") {
             onClose()
-            Task { await conversation.reveal(message.id) }
+            Task {
+                if !(await conversation.reveal(message.id)) {
+                    conversation.errorMessage = "Hushh couldn't show this message in the chat: it's too far back, or was deleted. Search (⌘F) shows it with the messages around it."
+                }
+            }
         }
         if message.isViewableMedia {
             Button("View") { conversation.openViewer(message, fromSharedMedia: true) }
@@ -274,7 +297,7 @@ struct MediaThumbnail: View {
             }
             .overlay(alignment: .bottomLeading) {
                 if case .video(let video, _) = message.body {
-                    Text(video.isGIF ? "GIF" : Duration.seconds(video.duration).formatted(.time(pattern: .minuteSecond)))
+                    Text(video.isGIF ? "GIF" : MediaDuration.text(Double(video.duration)))
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.white)
                         .shadow(radius: 2)
@@ -310,7 +333,7 @@ struct LinkRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                let text = message.plainText
+                let text = message.textHidingSpoilers
                 if !links.contains(where: { $0.absoluteString == text }) {
                     Text(text)
                         .font(.caption)
@@ -324,9 +347,11 @@ struct LinkRow: View {
         }
     }
 
-    /// "github.com" for https://www.github.com/…
+    /// "github.com" for https://www.github.com/…, "Telegram" for tg: links. A non-Latin domain
+    /// shows in its xn-- form, as browsers show it, never percent-encoded.
     static func site(of url: URL?) -> String {
-        guard let host = url?.host(), !host.isEmpty else { return "Link" }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if url?.scheme?.lowercased() == "tg" { return "Telegram" }
+        guard let host = url?.host(percentEncoded: false), !host.isEmpty else { return "Link" }
+        return host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }

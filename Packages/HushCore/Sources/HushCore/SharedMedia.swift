@@ -54,6 +54,8 @@ public final class SharedMediaModel {
     private var lists: [SharedMediaKind: [MessageModel]] = [:]
     private var loading: Set<SharedMediaKind> = []
     private var finished: Set<SharedMediaKind> = []
+    /// Kinds whose last page didn't load (offline, say). The next `loadMore` tries again.
+    private var failed: Set<SharedMediaKind> = []
     @ObservationIgnored private var nextFromMessageId: [SharedMediaKind: Int64] = [:]
     @ObservationIgnored private var countsTask: Task<Void, Never>?
 
@@ -81,6 +83,11 @@ public final class SharedMediaModel {
         !finished.contains(kind)
     }
 
+    /// Whether the last page of this kind failed to load.
+    public func didFail(_ kind: SharedMediaKind) -> Bool {
+        failed.contains(kind)
+    }
+
     /// How many of each kind there are, for the tabs. Asked once.
     public func loadCounts() async {
         if let countsTask { return await countsTask.value }
@@ -99,6 +106,7 @@ public final class SharedMediaModel {
     public func loadMore(_ kind: SharedMediaKind) async {
         guard !loading.contains(kind), !finished.contains(kind) else { return }
         loading.insert(kind)
+        failed.remove(kind)
         defer { loading.remove(kind) }
         do {
             let found = try await client.resilientSearchChatMessages(
@@ -107,10 +115,7 @@ public final class SharedMediaModel {
                 fromMessageId: nextFromMessageId[kind] ?? 0,
                 limit: Self.pageSize
             )
-            var list = lists[kind] ?? []
-            let known = Set(list.map(\.id))
-            list.append(contentsOf: found.messages.compactMap(map).filter { !known.contains($0.id) })
-            lists[kind] = list
+            append(found.messages, to: kind)
             if found.nextFromMessageId == 0 || found.messages.isEmpty {
                 finished.insert(kind)
             } else {
@@ -118,14 +123,40 @@ public final class SharedMediaModel {
             }
         } catch {
             Log.session.error("Loading shared \(kind.rawValue, privacy: .public) failed: \(String(describing: error), privacy: .public)")
-            finished.insert(kind)
+            failed.insert(kind)
         }
+    }
+
+    /// Adds a page of messages to the end of a list, skipping ones it already has.
+    func append(_ messages: [Message], to kind: SharedMediaKind) {
+        var list = lists[kind] ?? []
+        let known = Set(list.map(\.id))
+        list.append(contentsOf: messages.compactMap(map).filter { !known.contains($0.id) })
+        lists[kind] = list
+    }
+
+    /// A message from any of the lists. Most are older than the chat's loaded history.
+    func message(_ id: Int64) -> MessageModel? {
+        for list in lists.values {
+            if let message = list.first(where: { $0.id == id }) { return message }
+        }
+        return nil
     }
 
     /// A message's content changed (a transcription arrived, say).
     func replaceBody(of messageId: Int64, with body: MessageModel.Body) {
         for (kind, list) in lists {
             if let index = list.firstIndex(where: { $0.id == messageId }) { lists[kind]![index].body = body }
+        }
+    }
+
+    /// A voice message was played: its "not played" dot goes.
+    func markListened(_ messageId: Int64) {
+        for (kind, list) in lists {
+            guard let index = list.firstIndex(where: { $0.id == messageId }),
+                  case .voiceNote(var note, let caption) = list[index].body, !note.isListened else { continue }
+            note.isListened = true
+            lists[kind]![index].body = .voiceNote(note, caption: caption)
         }
     }
 

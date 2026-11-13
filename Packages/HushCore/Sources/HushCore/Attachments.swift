@@ -89,6 +89,26 @@ enum AttachmentPreparer {
         ))
     }
 
+    /// The same photo, video or file with a caption.
+    static func captioned(_ content: InputMessageContent, _ caption: FormattedText) -> InputMessageContent {
+        switch content {
+        case .inputMessagePhoto(let photo):
+            .inputMessagePhoto(InputMessagePhoto(
+                caption: caption, hasSpoiler: photo.hasSpoiler, photo: photo.photo,
+                selfDestructType: photo.selfDestructType, showCaptionAboveMedia: photo.showCaptionAboveMedia
+            ))
+        case .inputMessageVideo(let video):
+            .inputMessageVideo(InputMessageVideo(
+                caption: caption, hasSpoiler: video.hasSpoiler, selfDestructType: video.selfDestructType,
+                showCaptionAboveMedia: video.showCaptionAboveMedia, video: video.video
+            ))
+        case .inputMessageDocument(let document):
+            .inputMessageDocument(InputMessageDocument(caption: caption, document: document.document))
+        default:
+            content
+        }
+    }
+
     /// Re-encodes a picture as a JPEG of at most `maxPhotoDimension` pixels, upright, with any
     /// transparency flattened onto white. Returns the temporary file and its size.
     static func preparePhoto(_ url: URL) -> (path: String, width: Int, height: Int)? {
@@ -111,7 +131,7 @@ enum AttachmentPreparer {
         context.fill(bounds)
         context.draw(image, in: bounds)
 
-        let output = FileManager.default.temporaryDirectory.appending(path: "hush-photo-\(UUID().uuidString).jpg")
+        let output = OutgoingFiles.url(named: "photo.jpg")
         guard
             let flattened = context.makeImage(),
             let destination = CGImageDestinationCreateWithURL(output as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
@@ -131,5 +151,31 @@ enum AttachmentPreparer {
         else { return nil }
         let frame = CGRect(origin: .zero, size: size).applying(transform)
         return (Int(duration.seconds.rounded()), Int(abs(frame.width)), Int(abs(frame.height)))
+    }
+}
+
+/// Copies Hushh makes to send (re-encoded photos, pasted pictures, voice messages), each in its
+/// own folder so names never clash. TDLib uploads from them in the background, so they can't be
+/// deleted right after sending; instead, copies older than a day are cleared the first time
+/// Hushh makes a new one.
+public enum OutgoingFiles {
+    static let directory = FileManager.default.temporaryDirectory.appending(path: "Hushh Outgoing", directoryHint: .isDirectory)
+
+    /// A new, unused location for a file with this name.
+    public static func url(named name: String) -> URL {
+        _ = pruned
+        let folder = directory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appending(path: name)
+    }
+
+    private static let pruned: Void = removeFiles(olderThan: Foundation.Date.now.addingTimeInterval(-24 * 3600))
+
+    static func removeFiles(olderThan date: Foundation.Date) {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for folder in folders {
+            let modified = (try? folder.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if modified < date { try? FileManager.default.removeItem(at: folder) }
+        }
     }
 }

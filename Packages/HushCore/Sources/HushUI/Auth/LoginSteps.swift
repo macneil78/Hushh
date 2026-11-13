@@ -27,6 +27,7 @@ struct QRCodeStep: View {
 struct PhoneNumberStep: View {
     let auth: AuthModel
     @State private var phoneNumber = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -35,16 +36,23 @@ struct PhoneNumberStep: View {
             TextField("+44 7700 900123", text: $phoneNumber)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3)
+                .focused($isFocused)
                 .onSubmit(submit)
             Button("Continue", action: submit)
                 .keyboardShortcut(.defaultAction)
-                .disabled(phoneNumber.filter(\.isNumber).count < 5)
+                .disabled(!AuthModel.isPlausiblePhoneNumber(AuthModel.normalizedPhoneNumber(phoneNumber)) || auth.isWorking)
             Button("Log in with QR code instead", action: auth.useQRCode)
                 .buttonStyle(.link)
+            if auth.canGoBack {
+                Button("Back", action: auth.goBack)
+                    .buttonStyle(.link)
+            }
         }
+        .onAppear { isFocused = true }
     }
 
     private func submit() {
+        // Checks the same rule as the button: Return works even while the button is disabled.
         auth.submitPhoneNumber(phoneNumber)
     }
 }
@@ -53,27 +61,35 @@ struct CodeStep: View {
     let auth: AuthModel
     let prompt: AuthModel.CodePrompt
     @State private var code = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
             Text(prompt.destination)
                 .multilineTextAlignment(.center)
+            if let link = prompt.link {
+                Link(link.absoluteString, destination: link)
+                    .font(.callout)
+            }
             TextField("Code", text: $code)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.monospacedDigit())
                 .textContentType(.oneTimeCode)
+                .focused($isFocused)
                 .onSubmit(submit)
                 .onChange(of: code) { _, newValue in
                     if let length = prompt.length, newValue.count == length { submit() }
                 }
             Button("Continue", action: submit)
                 .keyboardShortcut(.defaultAction)
-                .disabled(code.isEmpty)
-            if prompt.canResend {
-                Button("Send the code another way", action: auth.resendCode)
-                    .buttonStyle(.link)
+                .disabled(code.isEmpty || auth.isWorking)
+            if let way = prompt.nextWay {
+                ResendButton(title: "Send the code \(way)", availableAt: prompt.resendDate, action: auth.resendCode)
             }
+            Button("Use a different number", action: auth.useDifferentNumber)
+                .buttonStyle(.link)
         }
+        .onAppear { isFocused = true }
     }
 
     private func submit() {
@@ -81,10 +97,29 @@ struct CodeStep: View {
     }
 }
 
+/// "Send the code by SMS in 1:59", enabled once Telegram allows it.
+struct ResendButton: View {
+    let title: String
+    let availableAt: Date
+    let action: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = Int(availableAt.timeIntervalSince(context.date).rounded(.up))
+            Button(remaining > 0 ? "\(title) in \(remaining / 60):\(String(format: "%02d", remaining % 60))" : title, action: action)
+                .buttonStyle(.link)
+                .disabled(remaining > 0)
+                .monospacedDigit()
+        }
+    }
+}
+
 struct PasswordStep: View {
     let auth: AuthModel
     let hint: String
+    let recoveryEmail: String?
     @State private var password = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -92,6 +127,7 @@ struct PasswordStep: View {
             SecureField("Password", text: $password)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3)
+                .focused($isFocused)
                 .onSubmit(submit)
             if !hint.isEmpty {
                 Text("Hint: \(hint)")
@@ -100,8 +136,15 @@ struct PasswordStep: View {
             }
             Button("Continue", action: submit)
                 .keyboardShortcut(.defaultAction)
-                .disabled(password.isEmpty)
+                .disabled(password.isEmpty || auth.isWorking)
+            if recoveryEmail != nil {
+                Button("Forgot password?", action: auth.forgotPassword)
+                    .buttonStyle(.link)
+            }
+            Button("Use a different number", action: auth.useDifferentNumber)
+                .buttonStyle(.link)
         }
+        .onAppear { isFocused = true }
     }
 
     private func submit() {
@@ -109,9 +152,49 @@ struct PasswordStep: View {
     }
 }
 
+struct PasswordRecoveryStep: View {
+    let auth: AuthModel
+    let emailPattern: String
+    @State private var code = ""
+    @State private var newPassword = ""
+    @State private var hint = ""
+    @FocusState private var isFocused: Bool
+
+    private var canSubmit: Bool { !code.isEmpty && !newPassword.isEmpty && !auth.isWorking }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Telegram emailed a recovery code to \(emailPattern). Enter it and choose a new password.")
+                .multilineTextAlignment(.center)
+            TextField("Recovery code", text: $code)
+                .textFieldStyle(.roundedBorder)
+                .font(.title3.monospacedDigit())
+                .textContentType(.oneTimeCode)
+                .focused($isFocused)
+            SecureField("New password", text: $newPassword)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.newPassword)
+            TextField("Hint for the new password (optional)", text: $hint)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(submit)
+            Button("Continue", action: submit)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSubmit)
+            Button("Back", action: auth.goBack)
+                .buttonStyle(.link)
+        }
+        .onAppear { isFocused = true }
+    }
+
+    private func submit() {
+        auth.recoverPassword(code: code.trimmingCharacters(in: .whitespaces), newPassword: newPassword, hint: hint)
+    }
+}
+
 struct EmailAddressStep: View {
     let auth: AuthModel
     @State private var email = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -120,14 +203,19 @@ struct EmailAddressStep: View {
             TextField("Email", text: $email)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3)
+                .focused($isFocused)
                 .onSubmit(submit)
             Button("Continue", action: submit)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!email.contains("@"))
+                .disabled(!email.contains("@") || auth.isWorking)
+            Button("Use a different number", action: auth.useDifferentNumber)
+                .buttonStyle(.link)
         }
+        .onAppear { isFocused = true }
     }
 
     private func submit() {
+        guard email.contains("@") else { return }
         auth.submitEmailAddress(email.trimmingCharacters(in: .whitespaces))
     }
 }
@@ -135,7 +223,9 @@ struct EmailAddressStep: View {
 struct EmailCodeStep: View {
     let auth: AuthModel
     let pattern: String
+    let resetNote: String?
     @State private var code = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -145,13 +235,25 @@ struct EmailCodeStep: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.monospacedDigit())
                 .textContentType(.oneTimeCode)
+                .focused($isFocused)
                 .onSubmit(submit)
             Button("Continue", action: submit)
                 .keyboardShortcut(.defaultAction)
-                .disabled(code.isEmpty)
+                .disabled(code.isEmpty || auth.isWorking)
             Button("Send a new code", action: auth.resendCode)
                 .buttonStyle(.link)
+            if let resetNote {
+                Text(resetNote)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("I can't open this email", action: auth.resetEmailAddress)
+                    .buttonStyle(.link)
+            }
+            Button("Use a different number", action: auth.useDifferentNumber)
+                .buttonStyle(.link)
         }
+        .onAppear { isFocused = true }
     }
 
     private func submit() {
@@ -169,7 +271,10 @@ struct QRCodeImage: View {
                 .resizable()
                 .interpolation(.none)
         } else {
-            Color.clear
+            Text("Hushh couldn't draw this QR code. Log in with your phone number instead.")
+                .font(.callout)
+                .foregroundStyle(.black)
+                .multilineTextAlignment(.center)
         }
     }
 

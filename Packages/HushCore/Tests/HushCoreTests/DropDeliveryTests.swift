@@ -33,7 +33,9 @@ struct DropDeliveryTests {
         }
 
         let received = Received()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        // Invisible and never key: borderless, far off screen, transparent.
+        let window = TestWindow.make(width: 400, height: 600)
+        defer { TestWindow.close(window) }
         let hosting = NSHostingView(rootView: DropHost(received: received, pasteboard: readingPasteboard ? pasteboard : empty))
         window.contentView = hosting
         window.layoutIfNeeded()

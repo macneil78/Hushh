@@ -68,3 +68,42 @@ struct DroppedFileTests {
         #expect(AttachmentDropDelegate.fileURL(from: URL(string: "https://example.com")! as NSURL) == nil)
     }
 }
+
+/// Pasting into the message box, again and again, from its own pasteboard.
+@MainActor
+struct ComposerPasteboardTests {
+    private func textView(_ fill: (NSPasteboard) -> Void) -> (ComposerNSTextView, NSPasteboard, () -> [URL]) {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("hushh-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        fill(pasteboard)
+        let textView = ComposerNSTextView(usingTextLayoutManager: false)
+        textView.isRichText = false
+        textView.pasteboard = pasteboard
+        var pasted: [URL] = []
+        textView.onPasteFiles = { pasted += $0 }
+        return (textView, pasteboard, { pasted })
+    }
+
+    @Test func twoPicturesPastedWithinASecondStayTwoFiles() throws {
+        let first = Fixtures.png(width: 4)
+        let second = Fixtures.png(width: 9)
+        let (textView, pasteboard, pasted) = textView { $0.declareTypes([.png], owner: nil); $0.setData(first, forType: .png) }
+        defer { pasteboard.releaseGlobally() }
+        textView.paste(nil)
+        pasteboard.declareTypes([.png], owner: nil)
+        pasteboard.setData(second, forType: .png)
+        textView.paste(nil)
+        let urls = pasted()
+        #expect(Set(urls).count == 2)
+        #expect(try urls.map { try Data(contentsOf: $0) } == [first, second])
+    }
+
+    @Test func textIsPastedFromTheViewsOwnPasteboard() {
+        let marker = "pasted \(UUID().uuidString)"
+        let (textView, pasteboard, pasted) = textView { $0.declareTypes([.string], owner: nil); $0.setString(marker, forType: .string) }
+        defer { pasteboard.releaseGlobally() }
+        textView.paste(nil)
+        #expect(textView.string == marker)
+        #expect(pasted().isEmpty)
+    }
+}

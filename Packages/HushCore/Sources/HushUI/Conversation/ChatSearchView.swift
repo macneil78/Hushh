@@ -4,7 +4,7 @@ import SwiftUI
 
 /// ⌘F in a chat: finds messages by their words (Telegram's search, the whole history) and by
 /// their meaning (on this Mac), in a panel over the top of the conversation. ↑/↓ choose, Enter
-/// jumps to the message, Esc closes.
+/// jumps to the message, ⓧ clears the field, Esc or Done closes.
 struct ChatSearchView: View {
     @Bindable var search: ChatSearch
     let conversation: ConversationModel
@@ -21,7 +21,7 @@ struct ChatSearchView: View {
     }
 
     private var hasQuery: Bool {
-        search.query.trimmingCharacters(in: .whitespaces).count >= 2
+        ChatSearch.isSearchable(search.query)
     }
 
     var body: some View {
@@ -39,10 +39,13 @@ struct ChatSearchView: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .onAppear { isFocused = true }
-        .onChange(of: search.results) { selection = 0 }
-        .onChange(of: models.state(of: .search)) { _, state in
-            if state == .ready { search.start() }
+        // The highlight stays on its result when meaning matches join the word matches.
+        .onChange(of: search.results) { old, new in
+            let selected = old.indices.contains(selection) ? old[selection].id : nil
+            selection = new.firstIndex { $0.id == selected } ?? 0
         }
+        // Downloaded, deleted, or found damaged (not every step of a download).
+        .onChange(of: models.isReady(.search)) { search.modelStateChanged() }
     }
 
     private var field: some View {
@@ -73,10 +76,17 @@ struct ChatSearchView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Button("Close Search", systemImage: "xmark.circle.fill", action: onClose)
+            if !search.query.isEmpty {
+                Button("Clear Search", systemImage: "xmark.circle.fill") {
+                    search.query = ""
+                    isFocused = true
+                }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+            }
+            Button("Done", action: onClose)
+                .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -124,7 +134,7 @@ struct ChatSearchView: View {
                         .foregroundStyle(MessagesStyle.outgoing)
                 }
                 Spacer()
-                Text(result.message.date.formatted(date: .abbreviated, time: .shortened))
+                Text(Self.date(result.message.date))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -187,18 +197,30 @@ struct ChatSearchView: View {
         }
     }
 
-    /// The message's text (or its transcript) with the searched words in bold.
+    /// "Today, 16:24" and "Yesterday, 9:05", as the conversation's day headings say; older ones
+    /// with their date.
+    static func date(_ date: Date, calendar: Calendar = .current) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDateInToday(date) { return "Today, \(time)" }
+        if calendar.isDateInYesterday(date) { return "Yesterday, \(time)" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// The message's text (or its transcript) with the searched words in bold, where the words
+    /// are what matched. A match by meaning has nothing to show in bold: the query's words in
+    /// it ("for", "the") are there by chance.
     static func snippet(for result: ChatSearch.Result, query: String) -> AttributedString {
         var text: String
         switch result.message.body {
         case .voiceNote, .videoNote:
             text = result.message.transcript.map { "🎤 \($0)" } ?? result.message.previewText
         default:
-            text = result.message.plainText.isEmpty ? result.message.previewText : result.message.plainText
+            text = result.message.plainText.isEmpty ? result.message.previewText : result.message.textHidingSpoilers
         }
         text = text.replacingOccurrences(of: "\n", with: " ")
         var attributed = AttributedString(text)
-        for word in query.split(whereSeparator: \.isWhitespace) where word.count >= 2 {
+        guard result.matchesWords else { return attributed }
+        for word in query.split(whereSeparator: \.isWhitespace) where word.count >= 2 || word.unicodeScalars.contains(where: SearchText.isWordlessScript) {
             var searchStart = attributed.startIndex
             while let range = attributed[searchStart...].range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) {
                 attributed[range].inlinePresentationIntent = .stronglyEmphasized

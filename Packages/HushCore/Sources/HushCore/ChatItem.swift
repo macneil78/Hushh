@@ -40,7 +40,11 @@ public final class ChatItem: Identifiable {
 
     // Raw TDLib state the store needs but views don't.
     @ObservationIgnored var type: ChatType
-    @ObservationIgnored var lastMessage: Message?
+    @ObservationIgnored var lastMessage: Message? {
+        didSet { lastContent = lastMessage?.content }
+    }
+    /// The latest message's content, edits included: TDLibKit's `Message` can't be changed.
+    @ObservationIgnored var lastContent: MessageContent?
     @ObservationIgnored var notificationSettings: ChatNotificationSettings
     @ObservationIgnored var lastReadInboxMessageId: Int64
     @ObservationIgnored var lastReadOutboxMessageId: Int64
@@ -61,6 +65,7 @@ public final class ChatItem: Identifiable {
         positions = chat.positions
         type = chat.type
         lastMessage = chat.lastMessage
+        lastContent = chat.lastMessage?.content
         notificationSettings = chat.notificationSettings
         lastReadInboxMessageId = chat.lastReadInboxMessageId
         lastReadOutboxMessageId = chat.lastReadOutboxMessageId
@@ -70,6 +75,20 @@ public final class ChatItem: Identifiable {
 
     public var displayTitle: String {
         kind == .savedMessages ? "Saved Messages" : title
+    }
+
+    /// For chats in `items` that share a name, a few words that tell them apart: the kind of
+    /// chat and the start of the latest message ("Group · See you at 8").
+    public static func details(tellingApart items: [ChatItem]) -> [Int64: String] {
+        var details: [Int64: String] = [:]
+        for same in Dictionary(grouping: items, by: { $0.displayTitle.lowercased() }).values where same.count > 1 {
+            for item in same {
+                let preview = item.preview.count > 40 ? item.preview.prefix(39) + "…" : item.preview
+                let detail = [item.kind.label, preview].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+                if !detail.isEmpty { details[item.id] = detail }
+            }
+        }
+        return details
     }
 
     public var hasUnread: Bool {
@@ -90,7 +109,7 @@ public final class ChatItem: Identifiable {
     }
 
     var isJoinedTelegramStub: Bool {
-        if case .messageContactRegistered = lastMessage?.content { return true }
+        if case .messageContactRegistered = lastContent { return true }
         return false
     }
 }

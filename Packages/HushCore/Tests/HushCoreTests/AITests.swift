@@ -123,3 +123,74 @@ struct SearchSnippetTests {
         #expect(!String(snippet.characters).contains("\n"))
     }
 }
+
+/// The saved form of a chat's search index.
+struct SemanticIndexFormatTests {
+    private func vector(_ axis: Int) -> [Float] {
+        var vector = [Float](repeating: 0, count: SemanticIndex.dimensions)
+        vector[axis] = 1
+        return vector
+    }
+
+    /// Indexes saved in the first format (HSI1) still load, so no index is thrown away.
+    @Test func oldIndexFilesStillLoad() throws {
+        var index = SemanticIndex()
+        index.add(7, vector: vector(0), fingerprint: 42)
+        index.add(9, vector: vector(1), fingerprint: 43)
+        index.newestSeen = 9
+        index.oldestSeen = 7
+        index.seenCount = 3
+        index.isComplete = true
+        // HSI1: the same header without the gap, and no fingerprints.
+        let v2 = index.serialized()
+        var v1 = Data("HSI1".utf8)
+        v1.append(v2[4..<33])
+        v1.append(v2[49..<(49 + 16)])
+        v1.append(v2[(49 + 16 + 8)...])
+        let loaded = try #require(SemanticIndex(serialized: v1))
+        #expect(loaded.count == 2 && loaded.newestSeen == 9 && loaded.oldestSeen == 7 && loaded.seenCount == 3 && loaded.isComplete)
+        #expect(loaded.fingerprint(of: 7) == 0 && loaded.gap == nil)
+        #expect(loaded.search(vector(1), limit: 1).first?.id == 9)
+    }
+
+    @Test func gapAndFingerprintsSurviveSaving() throws {
+        var index = SemanticIndex()
+        index.add(7, vector: vector(0), fingerprint: 42)
+        index.add(9, vector: vector(1), fingerprint: 43)
+        index.gap = .init(from: 500, stop: 300)
+        var loaded = try #require(SemanticIndex(serialized: index.serialized()))
+        #expect(loaded.gap == .init(from: 500, stop: 300))
+        #expect(loaded.fingerprint(of: 9) == 43)
+        loaded.remove([7])
+        #expect(loaded.fingerprint(of: 9) == 43 && loaded.fingerprint(of: 7) == nil)
+        // A truncated or padded file is refused, not read past its end.
+        let data = index.serialized()
+        #expect(SemanticIndex(serialized: data.dropLast()) == nil)
+        #expect(SemanticIndex(serialized: data + Data([0])) == nil)
+    }
+}
+
+/// What is worth indexing, and what is worth searching for, by meaning.
+struct SearchLanguageTests {
+    /// Whole sentences in Chinese and Japanese are indexed; thanks, laughter and one character
+    /// are not.
+    @Test func shortChineseAndJapaneseMessagesAreIndexed() {
+        for text in ["明日の会議は三時に変更", "駅で会いましょう", "明天的会议改到三点", "记得买牛奶"] {
+            #expect(SearchText.isMeaningful(text), "\(text)")
+        }
+        for text in ["谢谢你", "哈哈哈哈哈", "笑", "ok 👍"] {
+            #expect(!SearchText.isMeaningful(text), "\(text)")
+        }
+    }
+
+    /// Words that mean nothing alone ("the", "и") go to word search only; real queries, one-word
+    /// ones too, go to both.
+    @Test func littleWordsAreLeftToWordSearch() {
+        for query in ["the", "for", "и", "что", "это", "der", "de", "ok", "xx", "123", "what is", "the and for of"] {
+            #expect(!MeaningMatch.isWorthSearching(query), "\(query)")
+        }
+        for query in ["pizza for dinner", "кино", "матч", "Hochzeit", "雨", "🎂", "mentoring kids for math competitions"] {
+            #expect(MeaningMatch.isWorthSearching(query), "\(query)")
+        }
+    }
+}

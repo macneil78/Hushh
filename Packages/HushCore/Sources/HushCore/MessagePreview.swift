@@ -1,10 +1,20 @@
 @preconcurrency import TDLibKit
 
-/// One-line descriptions of messages for the chat list.
+/// One-line descriptions of messages for the chat list, notifications and reply quotes.
+/// Spoilers are masked, since none of these places can hide them until clicked.
 enum MessagePreview {
     static func text(for content: MessageContent) -> String {
+        text(for: content, selfDestructs: false)
+    }
+
+    /// - Parameter selfDestructs: The message disappears after it's viewed (Telegram's
+    ///   `selfDestructType`): only its kind shows, never its caption.
+    static func text(for content: MessageContent, selfDestructs: Bool) -> String {
+        if selfDestructs || MessageMapper.isSecretMedia(content) {
+            return selfDestructingLabel(for: content)
+        }
         let text: String = switch content {
-        case .messageText(let message): message.text.text
+        case .messageText(let message): RichText(message.text).textHidingSpoilers
         case .messagePhoto(let message): labeled("Photo", message.caption)
         case .messageVideo(let message): labeled("Video", message.caption)
         case .messageAnimation(let message): labeled("GIF", message.caption)
@@ -18,7 +28,7 @@ enum MessagePreview {
             message.sticker.emoji.isEmpty ? "Sticker" : "\(message.sticker.emoji) Sticker"
         case .messageAnimatedEmoji(let message): message.emoji
         case .messageDice(let message): message.emoji
-        case .messagePoll(let message): "Poll: \(message.poll.question.text)"
+        case .messagePoll(let message): "Poll: \(RichText(message.poll.question).textHidingSpoilers)"
         case .messageLocation, .messageLiveLocation, .messageVenue: "Location"
         case .messageContact(let message):
             "Contact: " + [message.contact.firstName, message.contact.lastName].filter { !$0.isEmpty }.joined(separator: " ")
@@ -54,7 +64,17 @@ enum MessagePreview {
     }
 
     private static func labeled(_ label: String, _ caption: FormattedText) -> String {
-        caption.text.isEmpty ? label : "\(label): \(caption.text)"
+        caption.text.isEmpty ? label : "\(label): \(RichText(caption).textHidingSpoilers)"
+    }
+
+    private static func selfDestructingLabel(for content: MessageContent) -> String {
+        switch content {
+        case .messagePhoto: "Self-destructing photo"
+        case .messageVideo, .messageAnimation: "Self-destructing video"
+        case .messageVideoNote: "Self-destructing video message"
+        case .messageVoiceNote: "Self-destructing voice message"
+        default: "Self-destructing message"
+        }
     }
 
     private static func singleLine(_ text: String) -> String {

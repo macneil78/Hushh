@@ -16,7 +16,8 @@ struct SettingsView: View {
                 if model.auth.step == .ready {
                     ChooseChatsView(chats: model.chats, files: model.files, isSheet: false)
                 } else {
-                    notLoggedIn
+                    LogInPrompt(model: model, reason: "Log in to choose which chats Hushh shows.")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             Tab("Notifications", systemImage: "bell") {
@@ -29,14 +30,40 @@ struct SettingsView: View {
                 AboutSettings(model: model)
             }
         }
-        .frame(width: 500)
+        // One size for every tab, so the window doesn't jump as you click through them. The
+        // Chats tab's list sets the height.
+        .frame(width: 500, height: Self.height)
     }
 
-    private var notLoggedIn: some View {
-        Text("Log in to choose which chats Hushh shows.")
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(40)
+    static let height: CGFloat = 480
+}
+
+/// In place of a setting that needs a Telegram account: why it's missing, and the way to log in.
+struct LogInPrompt: View {
+    let model: AppModel
+    let reason: String
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if model.state == .needsCredentials {
+                Text("This copy of Hushh was built without Telegram API credentials, so it can't log in. The Hushh window says how to add them.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Show Hushh Window") { openWindow(id: HushScenes.mainWindowId) }
+            } else if model.auth.step == .starting || model.auth.step == .loggingOut {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Text(reason)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Log In…") { openWindow(id: HushScenes.mainWindowId) }
+            }
+        }
+        .padding(30)
     }
 }
 
@@ -64,11 +91,10 @@ struct AccountSettings: View {
                 Button("Log Out…") { isConfirmingLogOut = true }
                     .padding(.top, 6)
             } else {
-                Text("Not logged in.")
-                    .foregroundStyle(.secondary)
+                LogInPrompt(model: model, reason: "You're not logged in to Telegram.")
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
         .confirmationDialog("Log out of Telegram on this Mac?", isPresented: $isConfirmingLogOut) {
             Button("Log Out", role: .destructive) { model.auth.logOut() }
@@ -102,7 +128,6 @@ struct NotificationSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 280)
     }
 }
 
@@ -126,7 +151,6 @@ struct AISettings: View {
             CodexSettingsSection(vault: vault)
         }
         .formStyle(.grouped)
-        .frame(height: 600)
     }
 
     private func row(_ model: AIModel) -> some View {
@@ -223,7 +247,7 @@ struct AboutSettings: View {
                 chatListReport
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
         .onAppear { report = model.chats.report() }
     }

@@ -5,16 +5,31 @@ import SwiftUI
 struct VoiceNoteView: View {
     let messageId: Int64
     let note: VoiceNoteMedia
+    /// Drawn for a blue bubble.
     let isOutgoing: Bool
     let files: FileStore
     let voice: VoicePlayback
     let onPlay: (URL) -> Void
+    /// Whether you sent it, where that differs from how it's drawn (Chat Info lists every
+    /// message without bubbles). Your own messages never show the "not played" dot.
+    var isOwnMessage: Bool?
+    @Environment(\.conversation) private var conversation
 
     private static let waveformWidth: CGFloat = 180
 
+    /// Message ids repeat across chats, so playback is matched on both.
+    private var key: VoicePlayback.Key {
+        VoicePlayback.Key(chatId: conversation?.chatId ?? 0, messageId: messageId)
+    }
+
+    private var isUnplayed: Bool {
+        !(isOwnMessage ?? isOutgoing) && !note.isListened
+    }
+
     var body: some View {
         let handle = files.handle(for: note.fileId)
-        let isCurrent = voice.messageId == messageId
+        let isCurrent = voice.current == key
+        let shownTime = isCurrent ? voice.currentTime : Double(note.duration)
         HStack(spacing: 10) {
             Button {
                 if let url = handle.localURL {
@@ -25,10 +40,11 @@ struct VoiceNoteView: View {
             } label: {
                 ZStack {
                     Circle().fill(isOutgoing ? AnyShapeStyle(.white.opacity(0.25)) : AnyShapeStyle(Color.accentColor))
-                    if handle.localURL == nil {
+                    if handle.isDownloading {
                         ProgressView().controlSize(.small)
                     } else {
-                        Image(systemName: isCurrent && voice.isPlaying ? "pause.fill" : "play.fill")
+                        // Not on this Mac and not on its way (a download failed): click to fetch it.
+                        Image(systemName: handle.localURL == nil ? "arrow.down" : isCurrent && voice.isPlaying ? "pause.fill" : "play.fill")
                             .foregroundStyle(.white)
                     }
                 }
@@ -36,6 +52,8 @@ struct VoiceNoteView: View {
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(playLabel(handle: handle, isCurrent: isCurrent))
+            .accessibilityValue(isUnplayed ? "Not played" : "")
 
             VStack(alignment: .leading, spacing: 4) {
                 WaveformBars(
@@ -48,9 +66,20 @@ struct VoiceNoteView: View {
                 .onTapGesture { location in
                     if isCurrent { voice.seek(to: location.x / Self.waveformWidth) }
                 }
+                .accessibilityElement()
+                .accessibilityLabel("Position")
+                .accessibilityValue(isCurrent
+                    ? "\(MediaDuration.spoken(voice.currentTime)) of \(MediaDuration.spoken(voice.duration))"
+                    : MediaDuration.spoken(Double(note.duration)))
+                .accessibilityAdjustableAction { direction in
+                    guard isCurrent, voice.duration > 0 else { return }
+                    let step = 5 / voice.duration
+                    voice.seek(to: voice.progress + (direction == .increment ? step : -step))
+                }
+                .accessibilityHidden(!isCurrent)
                 HStack(spacing: 5) {
-                    Text(Duration.seconds(isCurrent ? voice.currentTime : Double(note.duration)).formatted(.time(pattern: .minuteSecond)))
-                    if !isOutgoing, !note.isListened {
+                    Text(MediaDuration.text(shownTime))
+                    if isUnplayed {
                         // Not played yet.
                         Circle()
                             .fill(Color.accentColor)
@@ -59,9 +88,17 @@ struct VoiceNoteView: View {
                 }
                 .font(.caption.monospacedDigit())
                 .opacity(0.75)
+                .accessibilityHidden(true)  // the play button says it
             }
         }
         .task(id: note.fileId) { files.download(note.fileId, priority: 2) }
+    }
+
+    private func playLabel(handle: HushCore.FileHandle, isCurrent: Bool) -> String {
+        let length = MediaDuration.spoken(Double(note.duration))
+        if handle.isDownloading { return "Voice message, \(length), downloading" }
+        if handle.localURL == nil { return "Download voice message, \(length)" }
+        return isCurrent && voice.isPlaying ? "Pause voice message" : "Play voice message, \(length)"
     }
 }
 
@@ -87,7 +124,9 @@ struct WaveformBars: View {
     }
 }
 
-/// Recording in progress: elapsed time, a live level meter, and Cancel (Esc) or Send (Enter).
+/// Recording in progress: elapsed time, a live level meter, Cancel (Esc) and Send (the button or
+/// ⌘R). Return is left to the message box below, so it never sends a recording by surprise.
+/// While macOS asks for the microphone, it says so, and only Cancel works.
 struct RecordingBar: View {
     let recorder: VoiceRecorder
     let onCancel: () -> Void
@@ -100,16 +139,21 @@ struct RecordingBar: View {
                 .buttonStyle(.borderless)
                 .font(.title3)
                 .keyboardShortcut(.cancelAction)
-                .disabled(recorder.state != .recording)
-            Circle()
-                .fill(.red)
-                .frame(width: 10, height: 10)
-            Text(Duration.seconds(recorder.elapsed).formatted(.time(pattern: .minuteSecond)))
-                .font(.body.monospacedDigit())
-            Capsule()
-                .fill(.red.opacity(0.6))
-                .frame(width: 8 + 140 * recorder.level, height: 6)
-                .animation(.linear(duration: 0.05), value: recorder.level)
+                .disabled(recorder.state != .recording && recorder.state != .waitingForPermission)
+            if recorder.state == .waitingForPermission {
+                Text("Waiting for microphone access…")
+                    .foregroundStyle(.secondary)
+            } else {
+                Circle()
+                    .fill(.red)
+                    .frame(width: 10, height: 10)
+                Text(Duration.seconds(recorder.elapsed).formatted(.time(pattern: .minuteSecond)))
+                    .font(.body.monospacedDigit())
+                Capsule()
+                    .fill(.red.opacity(0.6))
+                    .frame(width: 8 + 140 * recorder.level, height: 6)
+                    .animation(.linear(duration: 0.05), value: recorder.level)
+            }
             Spacer()
             if recorder.state == .encoding {
                 ProgressView().controlSize(.small)
@@ -118,10 +162,9 @@ struct RecordingBar: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .font(.system(size: 26))
-                .keyboardShortcut(.defaultAction)
                 .disabled(recorder.state != .recording)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.top, 8)
     }
 }

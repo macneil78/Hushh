@@ -1,3 +1,4 @@
+import Accelerate
 import CoreML
 import Embeddings
 import Foundation
@@ -10,6 +11,8 @@ public actor TextEmbedder {
 
     private let base: URL
     private var bundle: Bert.ModelBundle?
+    /// The mean of `MeaningMatch.referenceQueries`' vectors, once worked out.
+    private var generic: [Float]?
     private var lastUse = ContinuousClock.now
     private var unloadTask: Task<Void, Never>?
 
@@ -33,10 +36,31 @@ public actor TextEmbedder {
         try await embed(["query: \(query)"])[0]
     }
 
+    /// What a query in general looks like to the model: the mean of the reference queries'
+    /// vectors (see `MeaningMatch`). Worked out once.
+    public func genericQuery() async throws -> [Float] {
+        if let generic { return generic }
+        let vectors = try await embed(MeaningMatch.referenceQueries.map { "query: \($0)" })
+        var mean = [Float](repeating: 0, count: Self.dimensions)
+        for vector in vectors { mean = vDSP.add(mean, vector) }
+        let generic = vDSP.divide(mean, Float(vectors.count))
+        self.generic = generic
+        return generic
+    }
+
+    /// The model's files load, but give vectors that can't be right: zeroed or otherwise
+    /// damaged weights.
+    public struct Damaged: Error {}
+
     /// e5 was trained with "query: " and "passage: " in front of the text, and needs them.
     private func embed(_ texts: [String]) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
-        let bundle = try await loaded()
+        return try await Self.oneAtATime.run { [self] in
+            try await embed(texts, with: try await loaded())
+        }
+    }
+
+    private func embed(_ texts: [String], with bundle: Bert.ModelBundle) async throws -> [[Float]] {
         var options = bundle.defaultEncodeOptions
         options.maxLength = Self.maxTokens
         options.postProcess = .meanPool(normalize: true)
@@ -59,7 +83,7 @@ public actor TextEmbedder {
 
     /// Loads the model now, so the first search doesn't wait for it.
     public func prepare() async throws {
-        _ = try await loaded()
+        _ = try await Self.oneAtATime.run { [self] in try await loaded() }
         lastUse = .now
         scheduleUnload()
     }
@@ -67,14 +91,28 @@ public actor TextEmbedder {
     public func unload() {
         unloadTask?.cancel()
         bundle = nil
+        generic = nil
     }
 
+    /// Loads the model and checks it: damaged files can load without an error and give vectors
+    /// of nothing (all the same, or not numbers), which would make search quietly useless.
     private func loaded() async throws -> Bert.ModelBundle {
         if let bundle { return bundle }
         let bundle = try await Bert.loadModelBundle(from: AIModel.search.folder(in: base))
+        let check = try await embed(["passage: встречаемся в кафе на Тверской", "passage: the flight got cancelled"], with: bundle)
+        let similarity = vDSP.dot(check[0], check[1])
+        guard check.allSatisfy({ $0.allSatisfy(\.isFinite) }), similarity.isFinite, similarity < 0.99 else {
+            throw Damaged()
+        }
         self.bundle = bundle
         return bundle
     }
+
+    /// The model's work, one piece at a time in the whole process, not only per embedder: with
+    /// two embedders working at once (tests make several), Metal's graph compiler crashed the
+    /// process (MPSGraphExecutable, two graphs compiling at once). The GPU runs one at a time
+    /// anyway.
+    private static let oneAtATime = SerialQueue()
 
     private func scheduleUnload() {
         unloadTask?.cancel()
@@ -87,5 +125,25 @@ public actor TextEmbedder {
     private func unloadIfIdle() {
         guard ContinuousClock.now - lastUse >= Self.idleTimeout else { return }
         bundle = nil
+    }
+}
+
+/// Runs async work one piece after another, in the order it comes.
+private actor SerialQueue {
+    private var last: Task<Void, Never>?
+
+    func run<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
+        let previous = last
+        let task = Task {
+            await previous?.value
+            try Task.checkCancellation()
+            return try await work()
+        }
+        last = Task { _ = await task.result }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 }

@@ -93,3 +93,67 @@ struct ChatListReportTests {
         #expect(report.summary.contains("Loading stopped early: Too many attempts."))
     }
 }
+
+/// visibility.json says which chats you hid. A damaged file, or one from a newer build, never
+/// crashes the app and is never replaced by the little that could be read from it.
+@MainActor
+struct VisibilityFileTests {
+    private func file(with json: String) throws -> URL {
+        try Fixtures.temporaryFile("visibility.json", contents: Data(json.utf8))
+    }
+
+    /// "1" and "01" are different JSON keys for the same chat.
+    @Test func duplicateNumericKeysDoNotCrash() throws {
+        let url = try file(with: #"{"choices":{"1":"show","01":"hide","+1":"show"},"hasChosenGroupsAndBots":true}"#)
+        let settings = VisibilitySettings()
+        settings.load(from: url)
+        #expect(settings.choices == [1: .hide])
+        #expect(settings.hasChosenGroupsAndBots)
+    }
+
+    /// One value this build doesn't know costs that entry only, and the file as it was is kept
+    /// before the next save rewrites it.
+    @Test func unknownValueCostsOnlyItsEntryAndTheFileIsKept() throws {
+        let original = #"{"choices":{"30":"hide","-1002":"show","-1003":"mute","abc":"hide"},"hasChosenGroupsAndBots":true}"#
+        let url = try file(with: original)
+        let settings = VisibilitySettings()
+        settings.load(from: url)
+        #expect(settings.choices == [30: .hide, -1002: .show])
+        #expect(settings.hasChosenGroupsAndBots)
+
+        settings.setChoice(.show, for: -1004)
+        let reloaded = VisibilitySettings()
+        reloaded.load(from: url)
+        #expect(reloaded.choices == [30: .hide, -1002: .show, -1004: .show])
+        #expect(reloaded.hasChosenGroupsAndBots)
+        let kept = try String(contentsOf: url.appendingPathExtension("unreadable"), encoding: .utf8)
+        #expect(kept == original)
+    }
+
+    @Test func fileWithoutTheFlagKeepsItsChoices() throws {
+        let url = try file(with: #"{"choices":{"30":"hide","-1002":"show"}}"#)
+        let settings = VisibilitySettings()
+        settings.load(from: url)
+        #expect(settings.choices == [30: .hide, -1002: .show])
+        #expect(!settings.hasChosenGroupsAndBots)
+        #expect(!FileManager.default.fileExists(atPath: url.appendingPathExtension("unreadable").path))
+    }
+
+    /// A file that isn't settings at all starts fresh, but the first save doesn't erase it.
+    @Test func unreadableFileIsKeptBeforeTheFirstSave() throws {
+        let original = #"{"choices":[1,2,3],"hasChosenGroupsAndBots":"yes"}"#
+        let url = try file(with: original)
+        let settings = VisibilitySettings()
+        settings.load(from: url)
+        #expect(settings.choices.isEmpty)
+        settings.setChoice(.hide, for: 42)
+        let kept = try String(contentsOf: url.appendingPathExtension("unreadable"), encoding: .utf8)
+        #expect(kept == original)
+
+        let truncated = try file(with: #"{"choices":{"30":"hi"#)
+        let again = VisibilitySettings()
+        again.load(from: truncated)
+        #expect(again.isLoaded && again.choices.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: truncated.appendingPathExtension("unreadable").path))
+    }
+}

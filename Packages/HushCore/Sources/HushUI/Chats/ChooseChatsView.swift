@@ -12,9 +12,8 @@ struct ChooseChatsView: View {
     @Environment(\.dismiss) private var dismiss
 
     private var filtered: [ChatItem] {
-        let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return candidates }
-        return candidates.filter { $0.displayTitle.localizedStandardContains(query) }
+        guard let match = NameMatch(query) else { return candidates }
+        return candidates.filter { match.matches($0.displayTitle) }
     }
 
     var body: some View {
@@ -58,8 +57,19 @@ struct ChooseChatsView: View {
             }
         }
         .frame(width: isSheet ? 480 : nil, height: isSheet ? 620 : 480)
-        // Computed once, so rows don't reshuffle while you're choosing.
+        // Rows don't reshuffle while you're choosing: chats that arrive later (a big first sync
+        // is still coming in) join at the end of their section.
         .onAppear { candidates = chats.chatsToChoose() }
+        .onChange(of: chats.choosableChatIds) {
+            candidates = Self.adding(chats.chatsToChoose(), to: candidates)
+        }
+    }
+
+    /// `shown` in its order, then whatever `latest` has that it doesn't. Nothing is taken away,
+    /// so a person switched back on stays in the list until it closes.
+    static func adding(_ latest: [ChatItem], to shown: [ChatItem]) -> [ChatItem] {
+        let ids = Set(shown.map(\.id))
+        return shown + latest.filter { !ids.contains($0.id) }
     }
 
     @ViewBuilder private func section(_ title: String, kinds: Set<ChatKind>) -> some View {
@@ -69,8 +79,16 @@ struct ChooseChatsView: View {
                 ForEach(items) { item in
                     HStack(spacing: 10) {
                         AvatarView(item: item, files: files, size: 28)
-                        Text(item.displayTitle)
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(item.displayTitle)
+                                .lineLimit(1)
+                            if item.kind == .service {
+                                // Hidden by default, like bots, but it's where they arrive.
+                                Text("Login codes and alerts about new logins")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
                         Toggle("Show \(item.displayTitle)", isOn: Binding(
                             get: { chats.isShown(item) },

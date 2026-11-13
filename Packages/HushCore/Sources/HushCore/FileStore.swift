@@ -32,7 +32,6 @@ public final class FileStore {
         return handle
     }
 
-    /// Starts downloading the file unless it's already on disk or on its way. Safe to call repeatedly.
     /// A file that's already on disk (the demo window's photo and voice message).
     public func provide(_ url: URL, for id: Int) {
         handle(for: id).localURL = url
@@ -46,8 +45,16 @@ public final class FileStore {
         return handle(for: id).localURL
     }
 
+    /// Starts downloading the file unless it's already on disk or on its way. Safe to call repeatedly.
     public func download(_ id: Int, priority: Int = 1) {
-        guard let client, handle(for: id).localURL == nil, requested.insert(id).inserted else { return }
+        let handle = handle(for: id)
+        if let url = handle.localURL, !FileManager.default.fileExists(atPath: url.path) {
+            // Deleted behind TDLib's back (in Finder, by a cleaner app): fetch it again. TDLib
+            // notices the missing file when asked for it.
+            handle.localURL = nil
+            requested.remove(id)
+        }
+        guard let client, handle.localURL == nil, requested.insert(id).inserted else { return }
         Task {
             do {
                 let file = try await client.downloadFile(fileId: id, limit: 0, offset: 0, priority: priority, synchronous: false)
@@ -55,6 +62,18 @@ public final class FileStore {
             } catch {
                 requested.remove(id)
                 Log.session.error("Download of file \(id) failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    /// Stops a download that's under way. What arrived so far stays, for a later download.
+    public func cancelDownload(_ id: Int) {
+        guard let client, requested.contains(id) else { return }
+        Task {
+            do {
+                _ = try await client.cancelDownloadFile(fileId: id, onlyIfPending: false)
+            } catch {
+                Log.session.error("Couldn't stop the download of file \(id): \(String(describing: error), privacy: .public)")
             }
         }
     }

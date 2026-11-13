@@ -1,4 +1,5 @@
 @preconcurrency import TDLibKit
+import Compression
 import Foundation
 
 /// A picture TDLib can download.
@@ -230,7 +231,12 @@ enum MediaMapping {
 
 /// Unpacks gzip data, the wrapper around Telegram's .tgs animated stickers.
 public enum Gzip {
-    public static func decompress(_ data: Data) -> Data? {
+    /// Real stickers unpack to a few hundred kilobytes. Telegram allows a .tgs of 64 KB, which
+    /// could unpack to 64 MB of JSON for Lottie to parse; anything past this limit is refused.
+    public static let maximumSize = 4 << 20
+
+    /// Nil for anything that isn't gzip, or that unpacks to more than `limit` bytes.
+    public static func decompress(_ data: Data, limit: Int = maximumSize) -> Data? {
         let bytes = [UInt8](data)
         // Header: magic 1f 8b, method 8 (deflate), flags, then 6 bytes we don't need.
         guard bytes.count > 18, bytes[0] == 0x1f, bytes[1] == 0x8b, bytes[2] == 8 else { return nil }
@@ -251,7 +257,39 @@ public enum Gzip {
         if flags & 0x02 != 0 { offset += 2 }  // FHCRC
         // The body is raw DEFLATE, followed by an 8-byte CRC and length trailer.
         guard offset < bytes.count - 8 else { return nil }
-        let deflated = Data(bytes[offset ..< bytes.count - 8])
-        return try? (deflated as NSData).decompressed(using: .zlib) as Data
+        return inflate(bytes[offset ..< bytes.count - 8], limit: limit)
+    }
+
+    /// Raw DEFLATE, unpacked a piece at a time so that it stops as soon as it passes `limit`.
+    private static func inflate(_ input: ArraySlice<UInt8>, limit: Int) -> Data? {
+        let stream = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
+        defer { stream.deallocate() }
+        guard compression_stream_init(stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { return nil }
+        defer { compression_stream_destroy(stream) }
+        let chunkSize = 64 << 10
+        let chunk = UnsafeMutablePointer<UInt8>.allocate(capacity: chunkSize)
+        defer { chunk.deallocate() }
+        var output = Data()
+        return input.withUnsafeBufferPointer { source -> Data? in
+            guard let base = source.baseAddress else { return nil }
+            stream.pointee.src_ptr = base
+            stream.pointee.src_size = source.count
+            while true {
+                stream.pointee.dst_ptr = chunk
+                stream.pointee.dst_size = chunkSize
+                let status = compression_stream_process(stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                let produced = chunkSize - stream.pointee.dst_size
+                output.append(chunk, count: produced)
+                guard output.count <= limit else { return nil }
+                switch status {
+                case COMPRESSION_STATUS_END:
+                    return output
+                case COMPRESSION_STATUS_OK where produced > 0 || stream.pointee.src_size > 0:
+                    continue
+                default:
+                    return nil  // damaged, or cut short
+                }
+            }
+        }
     }
 }

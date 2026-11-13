@@ -156,9 +156,18 @@ struct ZoomablePhoto: View {
     @State private var settledOffset: CGSize = .zero
 
     var body: some View {
-        LocalImage(url: files.handle(for: photo.largest.fileId).localURL, maxPixelSize: 4096, contentMode: .fit) {
+        let full = files.handle(for: photo.largest.fileId)
+        LocalImage(url: full.localURL, maxPixelSize: 4096, contentMode: .fit) {
             RemoteImage(source: photo.image, minithumbnail: photo.minithumbnail, files: files, contentMode: .fit)
+                .overlay {
+                    if full.isDownloading {
+                        ProgressView(value: full.progress ?? 0)
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                    }
+                }
         }
+        .accessibilityLabel("Photo")
         .scaleEffect(zoom)
         .offset(offset)
         .gesture(
@@ -223,9 +232,11 @@ struct ViewerVideo: View {
                         .progressViewStyle(.circular)
                         .tint(.white)
                 }
-                .task(id: video.fileId) { files.download(video.fileId, priority: 32) }
             }
         }
+        // Also when a file is already known: one deleted from disk is then fetched again
+        // rather than played as a black, silent player.
+        .task(id: video.fileId) { files.download(video.fileId, priority: 32) }
     }
 }
 

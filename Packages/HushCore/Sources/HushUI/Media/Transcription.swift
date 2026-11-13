@@ -45,6 +45,7 @@ struct TranscribeButton: View {
             }
             .buttonStyle(.plain)
             .help("Transcribe")
+            .accessibilityLabel(isWorking ? "Transcribing" : "Transcribe")
             .disabled(isWorking)
         }
     }

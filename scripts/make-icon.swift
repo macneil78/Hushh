@@ -1,5 +1,5 @@
 // Draws Hush's app icon into App/Assets.xcassets/AppIcon.appiconset.
-// Run from the repository root: swift scripts/make-icon.swift
+// Run from any folder: swift scripts/make-icon.swift
 //
 // A dusk gradient with a speech bubble whose three dots fade out: a conversation, quietly.
 // Full-bleed, because macOS rounds the corners itself. No Telegram paper plane (the API terms
@@ -66,7 +66,14 @@ func drawIcon(size: Int) -> CGImage {
     return context.makeImage()!
 }
 
-let directory = URL(filePath: "App/Assets.xcassets/AppIcon.appiconset", directoryHint: .isDirectory)
+// Next to this script, whatever the working directory: scripts/ is in the repository root.
+let root = URL(filePath: #filePath).absoluteURL.deletingLastPathComponent().deletingLastPathComponent()
+let catalog = root.appending(path: "App/Assets.xcassets", directoryHint: .isDirectory)
+guard FileManager.default.fileExists(atPath: catalog.path) else {
+    print("Couldn't find \(catalog.path). Run this script from its place in the repository.")
+    exit(1)
+}
+let directory = catalog.appending(path: "AppIcon.appiconset", directoryHint: .isDirectory)
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 for size in [16, 32, 64, 128, 256, 512, 1024] {
     let url = directory.appending(path: "icon_\(size).png")
