@@ -26,13 +26,32 @@ struct ConversationView: View {
         MessageTimeline(conversation: conversation, files: files)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    if let notice = conversation.notice {
+                        NoticeCapsule(text: notice)
+                    }
                     if let error = conversation.errorMessage {
                         ErrorBanner(message: error) { conversation.errorMessage = nil }
                     }
-                    if conversation.canPost {
+                    if conversation.selection != nil {
+                        SelectionBar(conversation: conversation)
+                    } else if conversation.canPost {
                         ComposerView(conversation: conversation, stickers: stickers, files: files, onClose: onClose)
                     } else {
                         ChannelFooter()
+                    }
+                }
+                .animation(.easeOut(duration: 0.2), value: conversation.notice)
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !isSearching, let pinned = conversation.pinnedMessage {
+                    PinnedBar(message: pinned) {
+                        Task {
+                            if !(await conversation.reveal(pinned.id)) {
+                                conversation.errorMessage = "The pinned message is too far back to jump to."
+                            }
+                        }
+                    } onUnpin: {
+                        conversation.setPinned(pinned, false)
                     }
                 }
             }
@@ -57,6 +76,7 @@ struct ConversationView: View {
             .onDisappear { search?.stop() }
             .background(MessagesStyle.background)
             .environment(\.conversation, conversation)
+            .environment(\.stickerLibrary, stickers)
         // Drop files anywhere on the conversation: top half as files, bottom half as photos and videos.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .onDrop(of: [.fileURL], delegate: AttachmentDropDelegate(
@@ -69,6 +89,12 @@ struct ConversationView: View {
             if let drop { DropZonesOverlay(state: drop) }
         }
         .quickLookPreview($conversation.quickLookURL)
+        .sheet(isPresented: Binding(
+            get: { conversation.forwarding != nil },
+            set: { if !$0 { conversation.forwarding = nil } }
+        )) {
+            ForwardPicker(conversation: conversation, chats: chats, files: files)
+        }
         .navigationTitle(chat.displayTitle)
         .navigationSubtitle(conversation.typingText ?? Self.subtitle(for: chat, chats: chats, at: now))
         // "last seen 5 minutes ago" ages, so refresh it now and then.

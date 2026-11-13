@@ -48,6 +48,8 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
     /// Photos, videos or files sent together share an album id (0 when not in an album).
     public var albumId: Int64 = 0
     public var reactions: [Reaction] = []
+    /// Pinned to the top of the chat.
+    public var isPinned = false
 
     public var isService: Bool {
         if case .service = body { return true }
@@ -106,6 +108,12 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
         return nil
     }
 
+    /// What Copy puts on the clipboard: the text or caption, or a voice message's transcript.
+    public var copyableText: String? {
+        if !plainText.isEmpty { return plainText }
+        return transcript
+    }
+
     public var isViewableMedia: Bool {
         switch body {
         case .photo, .video: true
@@ -135,10 +143,10 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
 
 /// A reaction under a message, with how many people chose it.
 public struct Reaction: Equatable, Sendable, Identifiable {
-    public enum Kind: Equatable, Sendable {
+    public enum Kind: Hashable, Sendable {
         case emoji(String)
-        /// A Premium custom emoji. Hush shows only the count.
-        case customEmoji
+        /// A custom emoji from an emoji pack, by its id.
+        case customEmoji(Int64)
         /// Paid star reactions. Hush shows only the count.
         case paid
     }
@@ -151,7 +159,7 @@ public struct Reaction: Equatable, Sendable, Identifiable {
     public var id: String {
         switch kind {
         case .emoji(let emoji): emoji
-        case .customEmoji: "custom"
+        case .customEmoji(let id): "custom-\(id)"
         case .paid: "paid"
         }
     }
@@ -305,5 +313,24 @@ enum MessageMapper {
         let names = userIds.map(name)
         guard names.count > 1, let last = names.last else { return names.first ?? "" }
         return names.dropLast().joined(separator: ", ") + " and " + last
+    }
+}
+
+extension Reaction.Kind {
+    /// Telegram's reaction type as Hushh's. Paid reactions can't be picked, so they're left out.
+    init?(_ type: ReactionType) {
+        switch type {
+        case .reactionTypeEmoji(let emoji): self = .emoji(emoji.emoji)
+        case .reactionTypeCustomEmoji(let custom): self = .customEmoji(custom.customEmojiId.rawValue)
+        case .reactionTypePaid: return nil
+        }
+    }
+
+    var reactionType: ReactionType? {
+        switch self {
+        case .emoji(let emoji): .reactionTypeEmoji(ReactionTypeEmoji(emoji: emoji))
+        case .customEmoji(let id): .reactionTypeCustomEmoji(ReactionTypeCustomEmoji(customEmojiId: TdInt64(id)))
+        case .paid: nil
+        }
     }
 }

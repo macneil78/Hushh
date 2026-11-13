@@ -107,7 +107,8 @@ struct ComposerView: View {
                 text: $conversation.composerText,
                 height: $editorHeight,
                 focusRequest: conversation.focusRequest,
-                onSubmit: conversation.send,
+                onSubmit: { conversation.send() },
+                onSubmitSilently: { conversation.send(silently: true) },
                 onUpArrowInEmptyComposer: conversation.editLastMessage,
                 onEscape: {
                     if !conversation.cancelComposerMode() { onClose() }
@@ -147,6 +148,12 @@ struct ComposerView: View {
             .font(.system(size: 22))
             .foregroundStyle(MessagesStyle.outgoing)
             .disabled(!conversation.canSend)
+            .help(isEditing ? "Save" : "Send (⌥↩ sends without sound)")
+            .contextMenu {
+                if !isEditing {
+                    Button("Send Without Sound") { conversation.send(silently: true) }
+                }
+            }
         } else {
             Button("Record Voice Message", systemImage: "waveform", action: conversation.startRecording)
                 .labelStyle(.iconOnly)
@@ -238,6 +245,8 @@ struct ComposerTextView: NSViewRepresentable {
     /// Takes keyboard focus whenever this changes.
     let focusRequest: Int
     let onSubmit: () -> Void
+    /// ⌥↩: Telegram's "Send Without Sound".
+    var onSubmitSilently: () -> Void = {}
     let onUpArrowInEmptyComposer: () -> Bool
     let onEscape: () -> Bool
     let onTextChange: () -> Void
@@ -313,6 +322,11 @@ struct ComposerTextView: NSViewRepresentable {
                 } else {
                     parent.onSubmit()
                 }
+                return true
+            case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+                // ⌥↩ sends without a notification sound; ⇧↩ still starts a new line.
+                guard NSApp.currentEvent?.modifierFlags.contains(.option) == true else { return false }
+                parent.onSubmitSilently()
                 return true
             case #selector(NSResponder.moveUp(_:)):
                 return textView.string.isEmpty && parent.onUpArrowInEmptyComposer()

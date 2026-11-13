@@ -75,7 +75,7 @@ struct MessageTimeline: View {
                 }
             }
             swipe.isEnabled = { [conversation] in
-                conversation.canPost && conversation.viewerMessageId == nil
+                conversation.canPost && conversation.viewerMessageId == nil && conversation.selection == nil
             }
             swipe.start()
         }

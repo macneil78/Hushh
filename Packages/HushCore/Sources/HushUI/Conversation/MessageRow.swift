@@ -40,6 +40,9 @@ struct MessageRow: View {
                 files: files,
                 swipe: swipe,
                 isHighlighted: isHighlighted,
+                isSelecting: conversation.selection != nil,
+                isSelected: conversation.selection?.contains(message.id) == true,
+                onToggleSelected: { conversation.toggleSelected([message.id]) },
                 onTapback: { isPickingReaction = true }
             ) {
                 MessageBubble(
@@ -59,17 +62,10 @@ struct MessageRow: View {
     }
 
     private var picker: some View {
-        ReactionPicker(
-            choices: conversation.reactionChoices,
-            chosen: Set(message.reactions.filter(\.isChosen).compactMap {
-                if case .emoji(let emoji) = $0.kind { return emoji }
-                return nil
-            }),
-            onPick: { emoji in
-                isPickingReaction = false
-                conversation.toggleReaction(emoji, on: message)
-            }
-        )
+        ReactionPicker(message: message, conversation: conversation, files: files) { kind in
+            isPickingReaction = false
+            conversation.toggleReaction(kind, on: message)
+        }
     }
 
     @ViewBuilder private var menu: some View {
@@ -77,13 +73,14 @@ struct MessageRow: View {
             Button("Tapback…") { isPickingReaction = true }
         }
         Button("Reply") { conversation.reply(to: message) }
+        Button("Forward…") { conversation.forwarding = [message] }
         if message.canEditText {
             Button("Edit") { conversation.startEditing(message) }
         }
-        if !message.plainText.isEmpty {
-            Button("Copy") {
+        if let copied = message.copyableText {
+            Button(message.plainText.isEmpty ? "Copy Transcript" : "Copy") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message.plainText, forType: .string)
+                NSPasteboard.general.setString(copied, forType: .string)
             }
         }
         if message.isViewableMedia {
@@ -95,6 +92,9 @@ struct MessageRow: View {
             }
             Button("Save As…") { FileActions.saveAs(url, suggestedName: suggestedFileName(for: url)) }
         }
+        Divider()
+        Button(message.isPinned ? "Unpin" : "Pin") { conversation.setPinned(message, !message.isPinned) }
+        Button("Select") { conversation.startSelecting([message]) }
         Divider()
         Button("Delete…", role: .destructive) { conversation.requestDeletion(of: [message]) }
     }
@@ -141,6 +141,10 @@ struct MessageChrome<Bubble: View>: View {
     var revealsTime = false
     /// Just jumped to: the row flashes.
     var isHighlighted = false
+    /// Picking messages with Select: a check circle beside each, and a click picks it.
+    var isSelecting = false
+    var isSelected = false
+    var onToggleSelected: () -> Void = {}
     /// Opens the reaction picker.
     let onTapback: () -> Void
     @ViewBuilder let bubble: Bubble
@@ -155,6 +159,26 @@ struct MessageChrome<Bubble: View>: View {
     private var captionInset: CGFloat { (showsSender ? Self.avatarSlot : 0) + MessagesStyle.tailWidth + 6 }
 
     var body: some View {
+        if isSelecting {
+            HStack(spacing: 6) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(MessagesStyle.outgoing) : AnyShapeStyle(.tertiary))
+                    .frame(width: 26)
+                content
+            }
+            // A click anywhere on the row picks it, rather than opening what's in the bubble.
+            .overlay {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onToggleSelected)
+            }
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 3) {
             if showsSender && isFirstInGroup {
                 Text(lead.sender.name)
@@ -179,7 +203,7 @@ struct MessageChrome<Bubble: View>: View {
                         .overlay(alignment: isOutgoing ? .topLeading : .topTrailing) {
                             if !reactions.isEmpty {
                                 // On the bubble's top corner, mostly above it, as Tapbacks sit.
-                                TapbackBadge(reactions: reactions, onTap: onTapback)
+                                TapbackBadge(reactions: reactions, files: files, onTap: onTapback)
                                     .fixedSize()
                                     .offset(x: isOutgoing ? -14 : 14, y: -17)
                             }
@@ -418,23 +442,27 @@ struct BubbleLayout: Layout {
     }
 }
 
-/// Formatted message text: selectable, with spoilers hidden until clicked.
+/// Formatted message text, with spoilers hidden until clicked.
 struct RichTextView: View {
     let text: RichText
     let onAccent: Bool
+    /// Off in bubbles, as in Messages: selectable text puts an AppKit view over the words that
+    /// takes right-clicks for its own Cut / Copy / Paste menu, hiding the message's menu (Reply,
+    /// Forward, Select…), whose Copy copies the whole message.
+    var isSelectable = false
     @State private var revealsSpoilers = false
 
     var body: some View {
         let view = Text(AttributedString(text, onAccent: onAccent, revealsSpoilers: revealsSpoilers))
         if text.hasSpoilers && !revealsSpoilers {
-            // Selectable text takes every click for itself, so it only becomes selectable once
-            // you've clicked to reveal the spoiler.
             view
                 .contentShape(Rectangle())
                 .onTapGesture { revealsSpoilers = true }
                 .help("Click to reveal")
-        } else {
+        } else if isSelectable {
             view.textSelection(.enabled)
+        } else {
+            view
         }
     }
 }

@@ -52,6 +52,11 @@ public final class ChatStore {
         items[id]
     }
 
+    /// Your Saved Messages, whose chat id is your own user id.
+    public var savedMessages: ChatItem? {
+        myUserId.flatMap { items[$0] }
+    }
+
     /// A Telegram user, as messages show them.
     public func person(_ userId: Int64) -> Person? {
         users[userId]
@@ -72,19 +77,20 @@ public final class ChatStore {
         return postableChannelIds.contains(channel.supergroupId)
     }
 
-    /// The emoji reactions a chat allows, in Telegram's order.
-    public func reactionChoices(for chatId: Int64) -> [String] {
+    /// The reactions a chat allows, in Telegram's order. The picker asks Telegram for each
+    /// message's own list (yours first); this is the stand-in until it answers.
+    public func reactionChoices(for chatId: Int64) -> [Reaction.Kind] {
         guard let item = items[chatId] else { return [] }
         switch item.availableReactions {
         case .chatAvailableReactionsAll:
-            return activeEmojiReactions
+            return activeEmojiReactions.map(Reaction.Kind.emoji)
         case .chatAvailableReactionsSome(let some):
-            return some.reactions.compactMap {
-                if case .reactionTypeEmoji(let reaction) = $0 { return reaction.emoji }
-                return nil
-            }
+            return some.reactions.compactMap(Reaction.Kind.init)
         }
     }
+
+    /// Whether you have Telegram Premium, which lets you react with custom emoji.
+    public private(set) var isPremium = false
 
     public func list(_ kind: ChatListKind) -> [ChatItem] {
         switch kind {
@@ -167,6 +173,60 @@ public final class ChatStore {
         Task { _ = try? await client.toggleChatIsMarkedAsUnread(chatId: chatId, isMarkedAsUnread: true) }
     }
 
+    /// Why Telegram turned down an action on a chat (too many pinned chats, say).
+    public var actionError: String?
+
+    /// Pins a chat to the top of its list, or unpins it.
+    public func setPinned(_ isPinned: Bool, _ item: ChatItem) {
+        guard let client else { return }
+        let chatId = item.id
+        let list = (item.isIn(.archive) && !item.isIn(.main) ? ChatListKind.archive : .main).tdList
+        Task {
+            do {
+                _ = try await client.toggleChatIsPinned(chatId: chatId, chatList: list, isPinned: isPinned)
+            } catch {
+                actionError = AuthModel.describe(error)
+            }
+        }
+    }
+
+    /// Mutes a chat for some seconds (`.max`: until you unmute it), or unmutes it (nil).
+    public func setMuted(_ item: ChatItem, for seconds: Int?) {
+        guard let client else { return }
+        let chatId = item.id
+        let settings = Self.notificationSettings(item.notificationSettings, mutedFor: seconds)
+        Task {
+            do {
+                _ = try await client.setChatNotificationSettings(chatId: chatId, notificationSettings: settings)
+            } catch {
+                actionError = AuthModel.describe(error)
+            }
+        }
+    }
+
+    /// A chat's notification settings with its own mute time, everything else kept. Telegram's
+    /// "forever" is the largest 32-bit number of seconds.
+    nonisolated static func notificationSettings(_ settings: ChatNotificationSettings, mutedFor seconds: Int?) -> ChatNotificationSettings {
+        ChatNotificationSettings(
+            disableMentionNotifications: settings.disableMentionNotifications,
+            disablePinnedMessageNotifications: settings.disablePinnedMessageNotifications,
+            muteFor: min(seconds ?? 0, Int(Int32.max)),
+            muteStories: settings.muteStories,
+            showPreview: settings.showPreview,
+            showStoryPoster: settings.showStoryPoster,
+            soundId: settings.soundId,
+            storySoundId: settings.storySoundId,
+            useDefaultDisableMentionNotifications: settings.useDefaultDisableMentionNotifications,
+            useDefaultDisablePinnedMessageNotifications: settings.useDefaultDisablePinnedMessageNotifications,
+            useDefaultMuteFor: false,
+            useDefaultMuteStories: settings.useDefaultMuteStories,
+            useDefaultShowPreview: settings.useDefaultShowPreview,
+            useDefaultShowStoryPoster: settings.useDefaultShowStoryPoster,
+            useDefaultSound: settings.useDefaultSound,
+            useDefaultStorySound: settings.useDefaultStorySound
+        )
+    }
+
     public func setArchived(_ isArchived: Bool, _ item: ChatItem) {
         guard let client else { return }
         let chatId = item.id
@@ -183,7 +243,8 @@ public final class ChatStore {
     // MARK: Session lifecycle
 
     /// Connects to the session and loads your visibility choices.
-    func attach(client: TDLibClient, myUserId: Int64, settingsFile: URL) {
+    func attach(client: TDLibClient, myUserId: Int64, isPremium: Bool = false, settingsFile: URL) {
+        self.isPremium = isPremium
         self.client = client
         self.myUserId = myUserId
         visibility.load(from: settingsFile)
@@ -329,6 +390,7 @@ public final class ChatStore {
     func reset() {
         client = nil
         myUserId = nil
+        isPremium = false
         items = [:]
         users = [:]
         directMessagesGroupIds = []
@@ -429,6 +491,7 @@ public final class ChatStore {
                 presence: presence
             )
             setPresence(presence, forUser: user.id)
+            if user.id == myUserId, isPremium != user.isPremium { isPremium = user.isPremium }
             if let photo = user.profilePhoto { files.apply(photo.small) }
             if previous?.isBot != isBot { scheduleRebuild() }
         case .updateUserStatus(let update):

@@ -93,6 +93,8 @@ public struct StickerMedia: Equatable, Sendable, Identifiable {
     public let emoji: String
     public let format: Format
     public let thumbnail: ImageSource?
+    /// Set for custom emoji (Premium emoji packs, custom reactions).
+    public var customEmojiId: Int64? = nil
 }
 
 public struct DocumentMedia: Equatable, Sendable {
@@ -179,13 +181,19 @@ enum MediaMapping {
         case .stickerFormatTgs: .lottie
         case .stickerFormatWebm: .video
         }
+        let customEmojiId: Int64? = if case .stickerFullTypeCustomEmoji(let custom) = sticker.fullType {
+            custom.customEmojiId.rawValue
+        } else {
+            nil
+        }
         return StickerMedia(
             fileId: sticker.sticker.id,
             width: sticker.width,
             height: sticker.height,
             emoji: sticker.emoji,
             format: format,
-            thumbnail: image(sticker.thumbnail)
+            thumbnail: image(sticker.thumbnail),
+            customEmojiId: customEmojiId
         )
     }
 

@@ -75,9 +75,9 @@ struct TranscriptText: View {
                 .opacity(0.7)
                 .fixedSize(horizontal: false, vertical: true))
         case .done(let transcript):
+            // Not selectable, so right-clicking it shows the message's menu (Copy Transcript).
             AnyView(Text(transcript.isEmpty ? "No speech" : transcript)
                 .font(.callout)
-                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true))
         case .failed(let reason):
             AnyView(Text(reason).font(.caption).opacity(0.7).fixedSize(horizontal: false, vertical: true))
