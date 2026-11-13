@@ -143,8 +143,7 @@ struct MessageTimeline: View {
     @ViewBuilder private func row(for item: TimelineItem) -> some View {
         switch item {
         case .timestamp(let date, _):
-            TimestampHeading(date: date)
-                .id(dayChanges)
+            TimestampHeading(date: date, dayChanges: dayChanges)
         case .unreadDivider:
             UnreadDivider()
         case .message(let message, let isFirstInGroup, let isLastInGroup):

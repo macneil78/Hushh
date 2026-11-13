@@ -99,6 +99,9 @@ extension View {
 /// Between bursts of messages, centered: "**Today** 14:20".
 struct TimestampHeading: View {
     let date: Date
+    /// Changes at midnight and with the time zone, so "Today" and "Yesterday" are worked out
+    /// again. An input rather than `.id`: rows in a `ForEach` keep the identity it gives them.
+    var dayChanges = 0
 
     var body: some View {
         Text("\(Text(DayHeading.label(for: date)).fontWeight(.semibold)) \(date.formatted(date: .omitted, time: .shortened))")
