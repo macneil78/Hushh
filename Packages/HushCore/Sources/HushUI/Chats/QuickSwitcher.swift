@@ -11,28 +11,35 @@ struct QuickSwitcher: View {
     @State private var query = ""
     @State private var selection = 0
 
-    /// Visible chats only, in Telegram's order. Names that start with what you typed come first.
+    /// Visible chats only, in Telegram's order. Names that start with what you typed come first,
+    /// then names with a word that starts with it.
     private var results: [ChatItem] {
         let all = chats.mainList + chats.archiveList
-        let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return Array(all.prefix(10)) }
-        let matches = all.filter { $0.displayTitle.localizedStandardContains(query) }
-        let starts = matches.filter { $0.displayTitle.lowercased().hasPrefix(query.lowercased()) }
-        let others = matches.filter { !$0.displayTitle.lowercased().hasPrefix(query.lowercased()) }
-        return Array((starts + others).prefix(10))
+        guard let match = NameMatch(query) else { return Array(all.prefix(Self.maxResults)) }
+        return Array(match.ranked(all, name: \.displayTitle).prefix(Self.maxResults))
     }
+
+    /// Room for the most results the switcher shows, so the sheet keeps its size (and the
+    /// search field its place) while results come and go as you type.
+    private static let maxResults = 10
+    private static let rowHeight: CGFloat = 38
+    private static let listHeight = CGFloat(maxResults) * rowHeight + CGFloat(maxResults - 1) * 2 + 16
 
     var body: some View {
         let results = results
+        let details = ChatItem.details(tellingApart: results)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 SwitcherField(
                     text: $query,
                     onMove: { step in
                         guard !results.isEmpty else { return }
                         selection = min(max(selection + step, 0), results.count - 1)
+                        // VoiceOver stays in the field, so say which chat is now chosen.
+                        AccessibilityNotification.Announcement(results[selection].displayTitle).post()
                     },
                     onSubmit: {
                         if results.indices.contains(selection) { onPick(results[selection]) }
@@ -43,39 +50,60 @@ struct QuickSwitcher: View {
             }
             .padding(12)
             Divider()
-            if results.isEmpty {
-                Text("No chats match.")
-                    .foregroundStyle(.secondary)
-                    .padding(24)
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
-                        HStack(spacing: 10) {
-                            AvatarView(item: item, files: files, size: 26)
-                            Text(item.displayTitle)
-                                .lineLimit(1)
-                            Spacer()
-                            if !item.isIn(.main) {
-                                Text("Archived")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+            Group {
+                if results.isEmpty {
+                    Text("No chats match.")
+                        .foregroundStyle(.secondary)
+                        .padding(24)
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
+                            row(item, detail: details[item.id], isSelected: index == selection)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            index == selection ? AnyShapeStyle(Color.accentColor.opacity(0.2)) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture { onPick(item) }
                     }
+                    .padding(8)
                 }
-                .padding(8)
             }
+            .frame(maxWidth: .infinity, minHeight: Self.listHeight, maxHeight: Self.listHeight, alignment: .top)
         }
         .frame(width: 440)
         .onChange(of: query) { selection = 0 }
+    }
+
+    private func row(_ item: ChatItem, detail: String?, isSelected: Bool) -> some View {
+        Button {
+            onPick(item)
+        } label: {
+            HStack(spacing: 10) {
+                AvatarView(item: item, files: files, size: 26)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.displayTitle)
+                        .lineLimit(1)
+                    // Two chats with one name: say which is which.
+                    if let detail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                if !item.isIn(.main) {
+                    Text("Archived")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: Self.rowHeight)
+            .background(
+                isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.2)) : AnyShapeStyle(.clear),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

@@ -36,11 +36,11 @@ struct StickerPicker: View {
     private var tabs: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
-                tabButton(.recent, help: "Recent") { Image(systemName: "clock") }
+                tabButton(.recent, help: "Recent Stickers") { Image(systemName: "clock") }
                 if !library.favorites.isEmpty {
-                    tabButton(.favorites, help: "Favourites") { Image(systemName: "star") }
+                    tabButton(.favorites, help: "Favourite Stickers") { Image(systemName: "star") }
                 }
-                tabButton(.gifs, help: "GIFs") { Text("GIF").font(.caption.weight(.bold)) }
+                tabButton(.gifs, help: "Saved GIFs") { Text("GIF").font(.caption.weight(.bold)) }
                 Divider().frame(height: 20)
                 ForEach(library.sets) { set in
                     tabButton(.set(set.id), help: set.title) {
@@ -67,6 +67,9 @@ struct StickerPicker: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        // The icon or the set's cover sticker says nothing to VoiceOver; the name does.
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(self.tab == tab ? .isSelected : [])
     }
 
     @ViewBuilder private var content: some View {
@@ -94,9 +97,12 @@ struct StickerPicker: View {
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 6)], spacing: 6) {
                 ForEach(stickers) { sticker in
-                    StickerView(sticker: sticker, files: files, size: 72, animates: false)
-                        .onTapGesture { onSticker(sticker) }
-                        .help(sticker.emoji)
+                    Button { onSticker(sticker) } label: {
+                        StickerView(sticker: sticker, files: files, size: 72, animates: false)
+                    }
+                    .buttonStyle(.plain)
+                    .help(sticker.emoji)
+                    .accessibilityLabel("Send sticker \(sticker.emoji)")
                 }
             }
         }
@@ -118,6 +124,7 @@ struct StickerPicker: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Send GIF")
                 }
             }
         }

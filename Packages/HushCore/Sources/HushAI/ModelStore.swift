@@ -27,9 +27,15 @@ public final class ModelStore {
         self.base = base
         embedder = TextEmbedder(modelsIn: base)
         for model in AIModel.allCases {
-            states[model] = model.isDownloaded(in: base) ? .ready : .missing
+            states[model] = switch (model.isDownloaded(in: base), model.weightsAreWhole(in: base)) {
+            case (false, _): .missing
+            case (true, false): .failed(Self.damaged)
+            case (true, true): .ready
+            }
         }
     }
+
+    static let damaged = "The model's files are damaged. Download it again."
 
     public func state(of model: AIModel) -> State {
         states[model] ?? .missing
@@ -47,6 +53,14 @@ public final class ModelStore {
         tasks[model] = Task {
             defer { tasks[model] = nil }
             do {
+                // Files already there are damaged (or this would be ready): the download would
+                // keep them, as it sees them already downloaded.
+                if model.isDownloaded(in: base) {
+                    switch model {
+                    case .search: await embedder.unload()
+                    }
+                    model.delete(in: base)
+                }
                 try await model.download(into: base) { fraction in
                     Task { @MainActor in
                         guard case .downloading = self.states[model] else { return }
@@ -59,7 +73,8 @@ public final class ModelStore {
                 case .search: try await embedder.prepare()
                 }
                 states[model] = .ready
-            } catch is CancellationError {
+            } catch where Task.isCancelled || Self.isCancellation(error) {
+                // Cancelled: the network download stops with URLError.cancelled, not CancellationError.
                 model.delete(in: base)
                 states[model] = .missing
             } catch {
@@ -67,6 +82,23 @@ public final class ModelStore {
                 states[model] = .failed(Self.describe(error))
             }
         }
+    }
+
+    /// When using a model fails (its files turned out damaged, say): says so, in Settings and
+    /// in search, with a way to download it again.
+    public func modelFailed(_ model: AIModel, _ error: Error) {
+        guard state(of: model) == .ready, !Self.isCancellation(error) else { return }
+        Self.log.error("The \(model.rawValue, privacy: .public) model failed: \(String(describing: error), privacy: .public)")
+        states[model] = .failed(Self.damaged)
+        Task {
+            switch model {
+            case .search: await embedder.unload()
+            }
+        }
+    }
+
+    static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     public func cancelDownload(_ model: AIModel) {
@@ -83,6 +115,7 @@ public final class ModelStore {
     }
 
     private static func describe(_ error: Error) -> String {
+        if error is TextEmbedder.Damaged { return damaged }
         if let error = error as? URLError {
             return error.code == .notConnectedToInternet ? "No internet connection." : error.localizedDescription
         }

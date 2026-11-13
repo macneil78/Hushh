@@ -13,6 +13,21 @@ public enum ChatKind: Sendable, Hashable {
     case channel
 }
 
+extension ChatKind {
+    /// What to call a chat of this kind next to its name, where its name alone isn't enough.
+    /// Nil for people, whose name is enough.
+    public var label: String? {
+        switch self {
+        case .person, .savedMessages: nil
+        case .secret: "Secret chat"
+        case .bot: "Bot"
+        case .service: "Telegram notifications"
+        case .group: "Group"
+        case .channel: "Channel"
+        }
+    }
+}
+
 /// The facts about one chat that decide whether it's shown.
 public struct ChatSummary: Sendable, Hashable, Identifiable {
     public var id: Int64

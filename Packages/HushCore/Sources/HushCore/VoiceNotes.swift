@@ -36,14 +36,35 @@ public enum Waveform {
 
     /// Bars for a recording: the loudest sample in each slice, scaled so the loudest bar is 31.
     static func bars(from samples: [Float], count: Int = barCount) -> [UInt8] {
-        guard !samples.isEmpty else { return [] }
-        let slice = Int((Double(samples.count) / Double(count)).rounded(.up))
-        let peaks = stride(from: 0, to: samples.count, by: slice).map { start in
-            samples[start ..< min(start + slice, samples.count)].reduce(Float(0)) { max($0, abs($1)) }
+        var peaks = Peaks(sampleCount: samples.count, barCount: count)
+        samples.withUnsafeBufferPointer { peaks.add($0) }
+        return peaks.bars
+    }
+
+    /// Builds the bars a chunk at a time, so a long recording never has to be in memory whole.
+    struct Peaks {
+        private let slice: Int
+        private var peaks: [Float]
+        private var position = 0
+
+        init(sampleCount: Int, barCount: Int = Waveform.barCount) {
+            slice = max(1, Int((Double(sampleCount) / Double(barCount)).rounded(.up)))
+            peaks = Array(repeating: 0, count: sampleCount == 0 ? 0 : (sampleCount + slice - 1) / slice)
         }
-        let loudest = peaks.max() ?? 0
-        guard loudest > 0 else { return peaks.map { _ in 0 } }
-        return peaks.map { UInt8(($0 / loudest * 31).rounded()) }
+
+        mutating func add(_ samples: UnsafeBufferPointer<Float>) {
+            for sample in samples {
+                let index = position / slice
+                if index < peaks.count { peaks[index] = max(peaks[index], abs(sample)) }
+                position += 1
+            }
+        }
+
+        var bars: [UInt8] {
+            let loudest = peaks.max() ?? 0
+            guard loudest > 0 else { return peaks.map { _ in 0 } }
+            return peaks.map { UInt8(($0 / loudest * 31).rounded()) }
+        }
     }
 }
 
@@ -162,30 +183,38 @@ enum VoiceNoteEncoder {
         var description: String { "Couldn't encode the voice message (\(step): \(status))." }
     }
 
+    /// The recording is read and encoded a second at a time, so memory stays small however long it is.
     static func encode(_ recording: URL) throws -> VoiceNote {
         let input = try AVAudioFile(forReading: recording)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: AVAudioFrameCount(input.length)) else {
+        guard input.length > 0 else { throw EncodingError(step: "empty recording", status: -1) }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 48000) else {
             throw EncodingError(step: "buffer", status: -1)
         }
-        try input.read(into: buffer)
-        let samples = buffer.floatChannelData.map { Array(UnsafeBufferPointer(start: $0[0], count: Int(buffer.frameLength))) } ?? []
 
         // Apple's Opus encoder only writes CAF files, so encode to one, then rewrap its packets.
         let caf = FileManager.default.temporaryDirectory.appending(path: "hush-voice-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: caf) }
-        try encodeOpus(buffer, to: caf)
+        var peaks = Waveform.Peaks(sampleCount: Int(input.length))
+        try encodeOpus(from: input, through: buffer, to: caf) { chunk in
+            if let channel = chunk.floatChannelData {
+                peaks.add(UnsafeBufferPointer(start: channel[0], count: Int(chunk.frameLength)))
+            }
+        }
         let stream = try readPackets(caf)
 
-        let ogg = FileManager.default.temporaryDirectory.appending(path: "hush-voice-\(UUID().uuidString).ogg")
+        let ogg = OutgoingFiles.url(named: "voice.ogg")
         try OggOpusWriter.data(for: stream).write(to: ogg)
         return VoiceNote(
             url: ogg,
             duration: max(1, Int((Double(stream.validFrames) / 48000).rounded())),
-            waveform: Waveform.pack(Waveform.bars(from: samples))
+            waveform: Waveform.pack(peaks.bars)
         )
     }
 
-    private static func encodeOpus(_ buffer: AVAudioPCMBuffer, to url: URL) throws {
+    /// Encodes the whole input, reading it into `buffer` one chunk at a time; `onChunk` sees each.
+    private static func encodeOpus(
+        from input: AVAudioFile, through buffer: AVAudioPCMBuffer, to url: URL, onChunk: (AVAudioPCMBuffer) -> Void
+    ) throws {
         var opus = AudioStreamBasicDescription(
             mSampleRate: 48000, mFormatID: kAudioFormatOpus, mFormatFlags: 0, mBytesPerPacket: 0,
             mFramesPerPacket: 960, mBytesPerFrame: 0, mChannelsPerFrame: 1, mBitsPerChannel: 0, mReserved: 0
@@ -198,7 +227,12 @@ enum VoiceNoteEncoder {
         try check("format", ExtAudioFileSetProperty(
             file, kExtAudioFileProperty_ClientDataFormat, UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &client
         ))
-        try check("write", ExtAudioFileWrite(file, buffer.frameLength, buffer.audioBufferList))
+        while input.framePosition < input.length {
+            try input.read(into: buffer)
+            guard buffer.frameLength > 0 else { break }
+            onChunk(buffer)
+            try check("write", ExtAudioFileWrite(file, buffer.frameLength, buffer.audioBufferList))
+        }
     }
 
     private static func readPackets(_ url: URL) throws -> OggOpusWriter.Stream {

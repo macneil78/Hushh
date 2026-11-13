@@ -84,7 +84,7 @@ struct DemoWindow: View {
 
     @ViewBuilder private func timelineRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .timestamp(let date):
+        case .timestamp(let date, _):
             TimestampHeading(date: date)
         case .message(let message, let isFirst, let isLast):
             MessageChrome(

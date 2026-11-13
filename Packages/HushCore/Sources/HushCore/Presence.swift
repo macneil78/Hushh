@@ -33,7 +33,8 @@ public enum Presence: Equatable, Sendable {
             if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
                 return "last seen yesterday at \(time)"
             }
-            if calendar.isDate(date, equalTo: now, toGranularity: .year) {
+            // Within about six months the day and time read best, also across New Year.
+            if let sixMonthsAgo = calendar.date(byAdding: .month, value: -6, to: now), date > sixMonthsAgo {
                 let day = date.formatted(Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).day().month(.abbreviated))
                 return "last seen \(day) at \(time)"
             }

@@ -10,19 +10,24 @@ struct ChatRow: View {
     let isSelected: Bool
 
     var body: some View {
-        ChatRowLayout(
-            title: item.displayTitle,
-            preview: preview,
-            date: item.lastActivity.map { ChatDate.short($0) },
-            unread: unread,
-            isMuted: item.isMuted,
-            isPinned: item.isPinned(in: list),
-            isChannel: item.kind == .channel
-        ) {
-            AvatarView(item: item, files: files, size: 40)
-                .overlay(alignment: .bottomTrailing) {
-                    if item.presence?.isOnline() == true { OnlineDot() }
-                }
+        // Redrawn every minute, so after midnight yesterday's "23:50" turns into a weekday, and
+        // the online dot goes out when Telegram's "online" lapses.
+        TimelineView(.everyMinute) { context in
+            ChatRowLayout(
+                title: item.displayTitle,
+                preview: preview,
+                date: item.lastActivity.map { ChatDate.short($0, now: context.date) },
+                unread: unread,
+                isMuted: item.isMuted,
+                isPinned: item.isPinned(in: list),
+                isChannel: item.kind == .channel,
+                isOnline: item.presence?.isOnline() == true
+            ) {
+                AvatarView(item: item, files: files, size: 40)
+                    .overlay(alignment: .bottomTrailing) {
+                        if item.presence?.isOnline() == true { OnlineDot() }
+                    }
+            }
         }
     }
 
@@ -58,6 +63,8 @@ struct ChatRowLayout<Picture: View>: View {
     let isMuted: Bool
     let isPinned: Bool
     let isChannel: Bool
+    /// Only for VoiceOver: the picture shows the online dot.
+    var isOnline = false
     @ViewBuilder let picture: Picture
 
     var body: some View {
@@ -70,6 +77,7 @@ struct ChatRowLayout<Picture: View>: View {
                         Image(systemName: "megaphone.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Channel")
                     }
                     Text(title)
                         .font(.body.weight(.semibold))
@@ -98,6 +106,24 @@ struct ChatRowLayout<Picture: View>: View {
             }
         }
         .padding(.vertical, 5)
+        // One element for VoiceOver, saying what the dots, icons and colours show.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(([title] + states).joined(separator: ", ")), \(preview)"))
+    }
+
+    private var states: [String] {
+        var states: [String] = []
+        if isChannel { states.append("channel") }
+        switch unread {
+        case .unread, .muted: states.append("unread")
+        case .mention: states.append("unread, mentions you")
+        case nil: break
+        }
+        if isOnline { states.append("online") }
+        if isPinned { states.append("pinned") }
+        if isMuted { states.append("muted") }
+        if let date { states.append(date) }
+        return states
     }
 }
 
@@ -137,16 +163,15 @@ struct OnlineDot: View {
 }
 
 enum ChatDate {
-    /// Time for today, weekday within the last week, otherwise the date.
-    static func short(_ date: Date, now: Date = .now) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
+    /// Time for today, weekday within the last week, otherwise the date. A date a little ahead
+    /// of this Mac's clock (another device's clock, a scheduled message) counts as today.
+    static func short(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? .max
-        if days < 7 {
-            return date.formatted(.dateTime.weekday(.abbreviated))
+        let style: Date.FormatStyle = switch days {
+        case -1...0: Date.FormatStyle(date: .omitted, time: .shortened, calendar: calendar, timeZone: calendar.timeZone)
+        case 1..<7: Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated)
+        default: Date.FormatStyle(date: .numeric, time: .omitted, calendar: calendar, timeZone: calendar.timeZone)
         }
-        return date.formatted(date: .numeric, time: .omitted)
+        return date.formatted(style)
     }
 }

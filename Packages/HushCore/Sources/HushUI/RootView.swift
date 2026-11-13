@@ -1,3 +1,4 @@
+import AppKit
 import HushCore
 import SwiftUI
 
@@ -42,18 +43,36 @@ struct RootView: View {
     }
 }
 
-/// Shown when the build has no Telegram API credentials.
+/// Shown when the build has no Telegram API credentials. Most people who see it got a copy
+/// someone else built, so it says what's wrong in plain words first, then how to build it.
 struct NeedsCredentialsView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Add your Telegram API credentials")
-                .font(.title2.weight(.semibold))
-            Text("1. Get an API ID and hash at my.telegram.org → API development tools.")
-            Text("2. Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig and fill them in.")
-            Text("3. Build and run again.")
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 56, height: 56)
+                    .accessibilityHidden(true)
+                Text("This copy of Hushh can't connect to Telegram yet")
+                    .font(.title2.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Every Telegram app needs its own API ID and hash, and this copy was built without them. A build contains the credentials of whoever made it, so build Hushh with your own.")
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("To build Hushh yourself:")
+                    .font(.headline)
+                Text("1. Log in at my.telegram.org with your phone number, open API development tools and create an app. It gives you an API ID and hash.")
+                Text("2. Copy `Config/Secrets.example.xcconfig` to `Config/Secrets.xcconfig` and fill them in.")
+                Text("3. Build and run again.")
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Link("Open my.telegram.org", destination: URL(string: "https://my.telegram.org")!)
         }
-        .frame(maxWidth: 460)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Paths and names can be copied.
+        .textSelection(.enabled)
+        .frame(maxWidth: 520, alignment: .leading)
         .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -13,12 +13,7 @@ struct ChatListView: View {
     private var chats: ChatStore { model.chats }
     private var listKind: ChatListKind { window.showsArchive ? .archive : .main }
 
-    private var items: [ChatItem] {
-        let list = chats.list(listKind)
-        let query = window.searchText.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return list }
-        return list.filter { $0.displayTitle.localizedStandardContains(query) }
-    }
+    private var items: [ChatItem] { window.listedChats(in: chats) }
 
     var body: some View {
         let items = items
@@ -74,14 +69,40 @@ struct ChatListView: View {
     }
 
     @ViewBuilder private var emptyState: some View {
-        if !chats.isLoaded {
+        if let match = NameMatch(window.searchText) {
+            noResults(match)
+        } else if !chats.isLoaded {
             ProgressView()
-        } else if !window.searchText.isEmpty {
-            ContentUnavailableView.search(text: window.searchText)
         } else if window.showsArchive {
             ContentUnavailableView("No Archived Chats", systemImage: "archivebox")
         } else {
             ContentUnavailableView("No Chats", systemImage: "bubble.left.and.bubble.right")
+        }
+    }
+
+    /// Nothing in this list matches: say where matching chats are, the other list or hidden.
+    private func noResults(_ match: NameMatch) -> some View {
+        let otherList = chats.list(window.showsArchive ? .main : .archive).filter { match.matches($0.displayTitle) }
+        let hidden = chats.chatsToChoose().filter { !chats.isShown($0) && match.matches($0.displayTitle) }
+        return ContentUnavailableView {
+            Label("No Results for “\(window.searchText)”", systemImage: "magnifyingglass")
+        } description: {
+            if !hidden.isEmpty {
+                Text(hidden.count == 1
+                     ? "“\(hidden[0].displayTitle)” is hidden. To show it, switch it on in Settings → Chats."
+                     : "\(hidden.count) hidden chats match. To show them, switch them on in Settings → Chats.")
+            } else if otherList.isEmpty {
+                // While chats are still arriving, a match may yet come: say so, not "No Results".
+                Text(chats.isLoaded ? "Check the spelling or try a new search." : "Searching…")
+            }
+        } actions: {
+            if !otherList.isEmpty {
+                Button(window.showsArchive
+                       ? "Show \(otherList.count) in Chats"
+                       : "Show \(otherList.count) in Archived Chats") {
+                    window.showsArchive.toggle()
+                }
+            }
         }
     }
 

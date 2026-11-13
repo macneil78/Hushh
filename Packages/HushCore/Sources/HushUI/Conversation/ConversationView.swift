@@ -26,6 +26,11 @@ struct ConversationView: View {
         MessageTimeline(conversation: conversation, files: files)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    if let error = conversation.historyError {
+                        ErrorBanner(message: error, onRetry: { Task { await conversation.loadOlder() } }) {
+                            conversation.dismissHistoryError()
+                        }
+                    }
                     if let error = conversation.errorMessage {
                         ErrorBanner(message: error) { conversation.errorMessage = nil }
                     }
@@ -132,6 +137,8 @@ extension ConversationView {
 
 struct ErrorBanner: View {
     let message: String
+    /// Shows "Try Again" when set.
+    var onRetry: (() -> Void)?
     let onDismiss: () -> Void
 
     var body: some View {
@@ -141,6 +148,10 @@ struct ErrorBanner: View {
             Text(message)
                 .font(.callout)
             Spacer()
+            if let onRetry {
+                Button("Try Again", action: onRetry)
+                    .buttonStyle(.borderless)
+            }
             Button("Dismiss", systemImage: "xmark", action: onDismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)

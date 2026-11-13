@@ -112,7 +112,7 @@ private struct SampleConversation: View {
             row(Sample.message(8, "I can", from: Sample.anna, minutes: 181), first: true, last: false, isGroup: true)
             row(Sample.message(9, "It's charged 🔋", from: Sample.anna, minutes: 181.5), first: false, last: true, isGroup: true, hovered: true)
             row(Sample.message(10, "This one didn't go through", from: Sample.me, minutes: 182, status: .failed("No connection")), first: true, last: true)
-            TypingBubble()
+            TypingBubble(typist: Sample.max, label: "Max is typing…", files: FileStore())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

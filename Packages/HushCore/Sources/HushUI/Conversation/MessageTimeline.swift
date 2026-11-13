@@ -1,3 +1,4 @@
+import Combine
 import HushCore
 import SwiftUI
 
@@ -10,6 +11,9 @@ struct MessageTimeline: View {
     @State private var isNearTop = false
     @State private var isPaging = false
     @State private var swipe = SwipeToReply()
+    /// Counts day changes (midnight, a new time zone), so "Today" and "Yesterday" headings
+    /// say what they should without anything else changing.
+    @State private var dayChanges = 0
 
     var body: some View {
         ScrollView {
@@ -24,8 +28,8 @@ struct MessageTimeline: View {
                 ForEach(conversation.timeline) { item in
                     row(for: item)
                 }
-                if conversation.typingText != nil, !conversation.isChannel {
-                    TypingBubble()
+                if let typingText = conversation.typingText, !conversation.isChannel {
+                    TypingBubble(typist: conversation.isGroup ? conversation.typist : nil, label: typingText, files: files)
                 }
                 // Telegram places a channel's sponsored message below its last post.
                 if let ad = conversation.sponsoredAd, !conversation.isLoadingInitial {
@@ -80,6 +84,13 @@ struct MessageTimeline: View {
             swipe.start()
         }
         .onDisappear { swipe.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
+            dayChanges += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange).receive(on: RunLoop.main)) { _ in
+            dayChanges += 1
+            conversation.calendarChanged()
+        }
         // A jump to a message (from search, or Show in Chat): bring it to the middle.
         .onChange(of: conversation.revealRequest) { _, request in
             guard let request, let item = conversation.timeline.first(where: { $0.contains(messageId: request.messageId) }) else { return }
@@ -131,8 +142,9 @@ struct MessageTimeline: View {
 
     @ViewBuilder private func row(for item: TimelineItem) -> some View {
         switch item {
-        case .timestamp(let date):
+        case .timestamp(let date, _):
             TimestampHeading(date: date)
+                .id(dayChanges)
         case .unreadDivider:
             UnreadDivider()
         case .message(let message, let isFirstInGroup, let isLastInGroup):
@@ -182,13 +194,15 @@ struct MessageTimeline: View {
 }
 
 enum DayHeading {
-    /// "Today", "Yesterday", a weekday within the week, otherwise the date.
-    static func label(for date: Date, calendar: Calendar = .current) -> String {
-        if calendar.isDateInToday(date) { return "Today" }
-        if calendar.isDateInYesterday(date) { return "Yesterday" }
-        let days = calendar.dateComponents([.day], from: date, to: calendar.startOfDay(for: .now)).day ?? .max
-        if days < 7 { return date.formatted(.dateTime.weekday(.wide)) }
-        if calendar.isDate(date, equalTo: .now, toGranularity: .year) {
+    /// "Today", "Yesterday", a weekday within the past week, otherwise the date.
+    static func label(for date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+        // Whole days between the two dates' days, so last Friday at 10:00 is 7 days back on a
+        // Friday afternoon, not 6. Dates ahead (a clock set wrong) get the date.
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? .max
+        if days == 0 { return "Today" }
+        if days == 1 { return "Yesterday" }
+        if 1 < days, days < 7 { return date.formatted(.dateTime.weekday(.wide)) }
+        if calendar.isDate(date, equalTo: now, toGranularity: .year) {
             return date.formatted(.dateTime.weekday(.wide).day().month(.wide))
         }
         return date.formatted(date: .long, time: .omitted)

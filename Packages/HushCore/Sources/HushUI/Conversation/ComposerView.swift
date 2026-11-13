@@ -5,14 +5,16 @@ import UniformTypeIdentifiers
 
 /// Where you write, as in Messages: a + button for photos, files, stickers and voice, and a
 /// glass message field floating over the conversation. Replies, edits and attachments show inside
-/// the field. Enter sends, Shift+Enter starts a new line, ↑ edits your last message, Esc drops a
-/// reply, edit or attachments and otherwise closes the chat, ⌘R records a voice message. Files
-/// can also be pasted or dropped onto the conversation.
+/// the field. Enter sends, Shift+Enter starts a new line, ↑ edits your last message, Tab moves
+/// to the next control (⌥Tab types a tab). Esc closes the sticker picker, drops a recording,
+/// an edit, a reply or attachments, and closes the chat only when the box is empty. ⌘R records
+/// a voice message; the recording shows above the box, which keeps what you type. Files can
+/// also be pasted or dropped onto the conversation.
 struct ComposerView: View {
     @Bindable var conversation: ConversationModel
     let stickers: StickerLibrary
     let files: FileStore
-    /// Esc with nothing to cancel closes the chat.
+    /// Esc with nothing to cancel and nothing typed closes the chat.
     var onClose: () -> Void = {}
     @State private var editorHeight: CGFloat = 30
     @State private var isPickingFiles = false
@@ -40,9 +42,8 @@ struct ComposerView: View {
                 }
                 if conversation.recorder.state != .idle {
                     RecordingBar(recorder: conversation.recorder, onCancel: conversation.cancelRecording, onSend: conversation.finishRecording)
-                } else {
-                    textRow
                 }
+                textRow
             }
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
         }
@@ -110,16 +111,22 @@ struct ComposerView: View {
                 onSubmit: conversation.send,
                 onUpArrowInEmptyComposer: conversation.editLastMessage,
                 onEscape: {
-                    if !conversation.cancelComposerMode() { onClose() }
+                    if isPickingSticker {
+                        isPickingSticker = false
+                    } else if !conversation.cancelComposerMode(),
+                              conversation.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onClose()
+                    }
                     return true
                 },
                 onTextChange: conversation.composerChanged,
-                onPasteFiles: { conversation.attach($0) }
+                onPasteFiles: { conversation.attach($0) },
+                placeholder: placeholder
             )
             .frame(height: min(max(editorHeight, 30), 180))
             .overlay(alignment: .topLeading) {
                 if conversation.composerText.isEmpty {
-                    Text(conversation.attachments.isEmpty ? "Message" : "Add a caption")
+                    Text(placeholder)
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 9)
                         .padding(.top, 6)
@@ -136,6 +143,10 @@ struct ComposerView: View {
         .padding(.vertical, 1)
     }
 
+    private var placeholder: String {
+        conversation.attachments.isEmpty ? "Message" : "Add a caption"
+    }
+
     /// Send once there's something to send; until then, record a voice message.
     @ViewBuilder private var trailingButton: some View {
         if conversation.canSend || isEditing {
@@ -147,7 +158,7 @@ struct ComposerView: View {
             .font(.system(size: 22))
             .foregroundStyle(MessagesStyle.outgoing)
             .disabled(!conversation.canSend)
-        } else {
+        } else if conversation.recorder.state == .idle {
             Button("Record Voice Message", systemImage: "waveform", action: conversation.startRecording)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
@@ -175,7 +186,7 @@ struct AttachmentStrip: View {
                             .font(.caption)
                             .lineLimit(1)
                             .frame(maxWidth: 140, alignment: .leading)
-                        Button("Remove", systemImage: "xmark.circle.fill") { onRemove(attachment) }
+                        Button("Remove \(attachment.name)", systemImage: "xmark.circle.fill") { onRemove(attachment) }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .foregroundStyle(.secondary)
@@ -243,6 +254,8 @@ struct ComposerTextView: NSViewRepresentable {
     let onTextChange: () -> Void
     /// Pasting files or an image attaches them instead of inserting text.
     let onPasteFiles: ([URL]) -> Void
+    /// What VoiceOver reads for the empty box.
+    var placeholder = "Message"
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -263,6 +276,7 @@ struct ComposerTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.string = text
+        textView.setAccessibilityLabel("Message")
 
         let scrollView = NSScrollView()
         scrollView.documentView = textView
@@ -277,9 +291,13 @@ struct ComposerTextView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? ComposerNSTextView else { return }
         textView.onPasteFiles = onPasteFiles
+        textView.setAccessibilityPlaceholderValue(placeholder)
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            // The typing on the undo stack refers to text that's gone now (sent, or swapped for an
+            // edit or a draft); undoing it would raise an exception.
+            context.coordinator.undoManager.removeAllActions()
         }
         // Measure after SwiftUI finishes this update; changing state during it isn't allowed.
         DispatchQueue.main.async { context.coordinator.measure(textView) }
@@ -293,9 +311,15 @@ struct ComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         var focusRequest = Int.min
+        /// The box's own undo history, separate from the window's, so it can be cleared.
+        let undoManager = UndoManager()
 
         init(_ parent: ComposerTextView) {
             self.parent = parent
+        }
+
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            undoManager
         }
 
         func textDidChange(_ notification: Notification) {
@@ -313,6 +337,17 @@ struct ComposerTextView: NSViewRepresentable {
                 } else {
                     parent.onSubmit()
                 }
+                return true
+            case #selector(NSResponder.insertLineBreak(_:)):
+                // ⌃↩: a plain new line, not a Unicode line separator.
+                textView.insertNewlineIgnoringFieldEditor(nil)
+                return true
+            case #selector(NSResponder.insertTab(_:)):
+                // Tab moves on, as in every other field; ⌥Tab still types a tab.
+                textView.window?.selectNextKeyView(nil)
+                return true
+            case #selector(NSResponder.insertBacktab(_:)):
+                textView.window?.selectPreviousKeyView(nil)
                 return true
             case #selector(NSResponder.moveUp(_:)):
                 return textView.string.isEmpty && parent.onUpArrowInEmptyComposer()
@@ -365,7 +400,8 @@ final class ComposerNSTextView: NSTextView {
         } else if prefersImage(), let url = writeImage() {
             onPasteFiles?([url])
         } else {
-            pasteAsPlainText(sender)
+            // Plain text, from this view's pasteboard (pasteAsPlainText would read the system one).
+            readSelection(from: pasteboard)
         }
     }
 
@@ -390,7 +426,8 @@ final class ComposerNSTextView: NSTextView {
         else { return nil }
         let stamp = Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
             .replacingOccurrences(of: ":", with: ".")
-        let url = FileManager.default.temporaryDirectory.appending(path: "Pasted Image \(stamp).\(fileExtension)")
+        // Each paste in its own folder: two pictures pasted within a second keep their own files.
+        let url = OutgoingFiles.url(named: "Pasted Image \(stamp).\(fileExtension)")
         return (try? data.write(to: url)) != nil ? url : nil
     }
 }

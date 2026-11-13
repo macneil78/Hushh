@@ -71,13 +71,25 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
         }
     }
 
-    /// One line describing the message, for reply quotes.
+    /// The message as plain text with its spoilers masked: for search results and other places
+    /// that show the text outside its bubble.
+    public var textHidingSpoilers: String {
+        switch body {
+        case .text(let text): text.textHidingSpoilers
+        case .photo(_, let caption), .video(_, let caption), .document(_, let caption), .voiceNote(_, let caption),
+             .media(_, _, let caption): caption.textHidingSpoilers
+        case .videoNote, .sticker: ""
+        case .service(let text), .placeholder(let text): text
+        }
+    }
+
+    /// One line describing the message, for reply quotes. Spoilers are masked.
     public var previewText: String {
         func labeled(_ label: String, _ caption: RichText) -> String {
-            caption.isEmpty ? label : "\(label): \(caption.text)"
+            caption.isEmpty ? label : "\(label): \(caption.textHidingSpoilers)"
         }
         let text: String = switch body {
-        case .text(let text): text.text
+        case .text(let text): text.textHidingSpoilers
         case .photo(_, let caption): labeled("Photo", caption)
         case .video(let video, let caption): labeled(video.isGIF ? "GIF" : "Video", caption)
         case .videoNote: "Video message"
@@ -137,8 +149,8 @@ public struct MessageModel: Identifiable, Equatable, Sendable {
 public struct Reaction: Equatable, Sendable, Identifiable {
     public enum Kind: Equatable, Sendable {
         case emoji(String)
-        /// A Premium custom emoji. Hush shows only the count.
-        case customEmoji
+        /// A Premium custom emoji, by its id. Hush shows only the count.
+        case customEmoji(Int64)
         /// Paid star reactions. Hush shows only the count.
         case paid
     }
@@ -151,7 +163,7 @@ public struct Reaction: Equatable, Sendable, Identifiable {
     public var id: String {
         switch kind {
         case .emoji(let emoji): emoji
-        case .customEmoji: "custom"
+        case .customEmoji(let id): "custom-\(id)"
         case .paid: "paid"
         }
     }
@@ -263,7 +275,7 @@ enum MessageMapper {
 
         // Paid posts are a channel feature; Hush doesn't buy content.
         case .messagePaidMedia(let message):
-            return .placeholder("Paid content. Open Telegram on your phone to see it." + (message.caption.text.isEmpty ? "" : "\n\(message.caption.text)"))
+            return .placeholder("Paid content. Open Telegram on your phone to see it." + (message.caption.text.isEmpty ? "" : "\n\(RichText(message.caption).textHidingSpoilers)"))
 
         // Noise: housekeeping, promotions, payments and mini-app plumbing you don't need to see.
         case .messageChatUpgradeTo, .messageChatUpgradeFrom, .messageChatSetTheme, .messageChatSetBackground,
@@ -287,7 +299,7 @@ enum MessageMapper {
         }
     }
 
-    private static func isSecretMedia(_ content: MessageContent) -> Bool {
+    static func isSecretMedia(_ content: MessageContent) -> Bool {
         switch content {
         case .messagePhoto(let message): message.isSecret
         case .messageVideo(let message): message.isSecret

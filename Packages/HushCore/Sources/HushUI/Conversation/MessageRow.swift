@@ -76,8 +76,11 @@ struct MessageRow: View {
         if !conversation.reactionChoices.isEmpty {
             Button("Tapback…") { isPickingReaction = true }
         }
+        if case .failed = message.status {
+            Button("Try Again") { conversation.resend(message) }
+        }
         Button("Reply") { conversation.reply(to: message) }
-        if message.canEditText {
+        if conversation.canEdit(message) {
             Button("Edit") { conversation.startEditing(message) }
         }
         if !message.plainText.isEmpty {
@@ -126,6 +129,10 @@ extension DeliveryStatus.State {
 /// Everything around a bubble, laid out as in Messages: in groups, the sender's name above the
 /// first bubble and their picture beside the last; a Tapback badge on the top corner; "Edited"
 /// and the delivery status underneath. Hovering shows a button to react.
+///
+/// VoiceOver reads it in this order: the sender, the message, its time, "Edited" and the
+/// delivery status, the React button, then the reactions. The time and the React button are
+/// there for VoiceOver and the keyboard even while the pointer is elsewhere.
 struct MessageChrome<Bubble: View>: View {
     let lead: MessageModel
     let isFirstInGroup: Bool
@@ -146,61 +153,85 @@ struct MessageChrome<Bubble: View>: View {
     @ViewBuilder let bubble: Bubble
     @Environment(\.showsHoverDetails) private var showsHoverDetails
     @State private var isHovering = false
+    @FocusState private var isReactFocused: Bool
 
     private static var avatarSlot: CGFloat { SenderAvatarSlot.size + 8 }
 
     private var isOutgoing: Bool { lead.isOutgoing }
     private var showsSender: Bool { isGroup && !isOutgoing }
+    private var showsSenderName: Bool { showsSender && isFirstInGroup }
+    /// How far the Tapback badge rises above the bubble's top edge.
+    private static var badgeRise: CGFloat { 17 }
     /// Lines up captions under the bubble with its body, past the avatar and the tail.
     private var captionInset: CGFloat { (showsSender ? Self.avatarSlot : 0) + MessagesStyle.tailWidth + 6 }
 
     var body: some View {
         VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 3) {
-            if showsSender && isFirstInGroup {
+            if showsSenderName {
                 Text(lead.sender.name)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .padding(.leading, captionInset + 6)
+                    // The Tapback badge rises above the bubble; it must not cover the name.
+                    .padding(.bottom, reactions.isEmpty ? 0 : Self.badgeRise - 1)
+                    .accessibilitySortPriority(5)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 if showsSender {
+                    // The name above already says who it is.
                     SenderAvatarSlot(sender: lead.sender, showsAvatar: isLastInGroup, files: files)
+                        .accessibilityHidden(true)
                 }
                 if case .failed = delivery {
+                    // "Not Delivered" underneath says it in words.
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.title3)
                         .foregroundStyle(.red)
                         .padding(.bottom, 6)
+                        .accessibilityHidden(true)
                 }
                 // The react button sits on the side facing the middle of the window.
                 HStack(spacing: 6) {
                     if isOutgoing { reactButton }
                     bubble
+                        .accessibilitySortPriority(4)
                         .overlay(alignment: isOutgoing ? .topLeading : .topTrailing) {
-                            if !reactions.isEmpty {
-                                // On the bubble's top corner, mostly above it, as Tapbacks sit.
-                                TapbackBadge(reactions: reactions, onTap: onTapback)
-                                    .fixedSize()
-                                    .offset(x: isOutgoing ? -14 : 14, y: -17)
+                            // On the bubble's top corner toward the middle of the window, mostly
+                            // above it, as Tapbacks sit. (The Group keeps the alignment guide,
+                            // which a bare `if` here would drop.)
+                            let isOutgoing = isOutgoing
+                            Group {
+                                if !reactions.isEmpty {
+                                    TapbackBadge(reactions: reactions, onTap: onTapback)
+                                        .fixedSize()
+                                }
                             }
+                            .alignmentGuide(isOutgoing ? .leading : .trailing) { badge in
+                                TapbackBadge.anchor(width: badge.width, isOutgoing: isOutgoing)
+                            }
+                            .offset(y: -Self.badgeRise)
+                            .accessibilitySortPriority(0)
                         }
                         // Right at the bubble's edge, where the react button and time give way.
                         .modifier(SwipeReplyArrow(id: lead.id, swipe: swipe))
                     if !isOutgoing { reactButton }
                 }
                 // The time, while the pointer is over the message: beside it, toward the middle
-                // of the window, without moving anything.
+                // of the window, without moving anything. Otherwise it is drawn clear rather
+                // than hidden, so VoiceOver still reads it.
                 .overlay(alignment: isOutgoing ? .leading : .trailing) {
                     Text(lead.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isHovering || revealsTime ? AnyShapeStyle(.secondary) : AnyShapeStyle(.clear))
                         .lineLimit(1)
                         .fixedSize()
                         .frame(width: 64, alignment: isOutgoing ? .trailing : .leading)
                         .offset(x: isOutgoing ? -70 : 70)
-                        .opacity(isHovering || revealsTime ? 1 : 0)
                         .modifier(HiddenWhileSwiping(id: lead.id, swipe: swipe))
                         .allowsHitTesting(false)
+                        .accessibilitySortPriority(3)
                 }
             }
             .frame(maxWidth: MessagesStyle.maxBubbleWidth + (showsSender ? Self.avatarSlot : 0), alignment: isOutgoing ? .trailing : .leading)
@@ -212,8 +243,10 @@ struct MessageChrome<Bubble: View>: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(isOutgoing ? .trailing : .leading, captionInset)
+                .accessibilitySortPriority(2)
             }
         }
+        .accessibilityElement(children: .contain)
         // Bubbles never reach the far side of the window.
         .padding(isOutgoing ? .leading : .trailing, 60)
         .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
@@ -225,23 +258,28 @@ struct MessageChrome<Bubble: View>: View {
                 .padding(.vertical, -3)
                 .animation(.easeOut(duration: isHighlighted ? 0.15 : 0.8), value: isHighlighted)
         }
-        .padding(.top, (isFirstInGroup ? 10 : 2) + (reactions.isEmpty ? 0 : 14))
+        // Room for the badge, clear of the message above (the sender's name makes its own).
+        .padding(.top, (isFirstInGroup ? 10 : 2) + (reactions.isEmpty || showsSenderName ? 0 : Self.badgeRise + 1))
         .onHover { isHovering = $0 && showsHoverDetails }
     }
 
-    /// Shown while the pointer is over the message; always takes its space, so nothing shifts.
+    /// Shown while the pointer is over the message or the keyboard is on it; always takes its
+    /// space, so nothing shifts. Otherwise it is drawn clear rather than hidden, so VoiceOver
+    /// and keyboard navigation still reach it.
     @ViewBuilder private var reactButton: some View {
         if canReact {
+            let isShown = isHovering || isReactFocused
             Button("React", systemImage: "face.smiling", action: onTapback)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isShown ? AnyShapeStyle(.secondary) : AnyShapeStyle(.clear))
                 .frame(width: 26, height: 26)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .glassEffect(isShown ? .regular.interactive() : .identity, in: Circle())
+                .focused($isReactFocused)
                 .help("React")
-                .opacity(isHovering ? 1 : 0)
                 .modifier(HiddenWhileSwiping(id: lead.id, swipe: swipe))
+                .accessibilitySortPriority(1)
         }
     }
 }
@@ -263,10 +301,20 @@ struct MessageBubble: View {
 
     private var isOutgoing: Bool { message.isOutgoing }
     private var alignment: HorizontalAlignment { isOutgoing ? .trailing : .leading }
+    /// Arabic or Hebrew text sits on the bubble's right side.
+    private var contentAlignment: Alignment {
+        if case .text(let text) = message.body, text.isRightToLeft { return .trailing }
+        return .leading
+    }
+    /// Dimmed text keeps enough contrast on the grey bubble; on the blue one, white only just
+    /// does, so it stays fully opaque there.
+    private func dimmed(_ opacity: Double) -> Double { isOutgoing ? 1 : opacity }
 
     var body: some View {
         switch message.body {
         case .sticker, .videoNote:
+            bare
+        case .text(let text) where message.forwardedFrom == nil && Emoji.isJumbo(text):
             bare
         case .photo(let photo, let caption):
             visualMedia(caption: caption) {
@@ -280,7 +328,7 @@ struct MessageBubble: View {
             bubble(hasTail: hasTail) {
                 header
                 content
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: contentAlignment)
             }
         }
     }
@@ -291,6 +339,8 @@ struct MessageBubble: View {
             .bubblePadding(isOutgoing: isOutgoing)
             .foregroundStyle(isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
             .background(MessagesStyle.bubbleColor(isOutgoing: isOutgoing), in: BubbleShape(isOutgoing: isOutgoing, hasTail: hasTail))
+            // Stacked accents ("Zalgo" text) would otherwise draw over the messages around it.
+            .clipShape(BubbleShape(isOutgoing: isOutgoing, hasTail: hasTail))
     }
 
     /// "Forwarded from" and the message replied to, at the top of the bubble.
@@ -298,7 +348,9 @@ struct MessageBubble: View {
         if let forwardedFrom = message.forwardedFrom {
             Text("Forwarded from \(forwardedFrom)")
                 .font(.caption.italic())
-                .opacity(0.75)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .opacity(dimmed(0.75))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         if let reply = message.reply {
@@ -341,6 +393,11 @@ struct MessageBubble: View {
 
     @ViewBuilder private var content: some View {
         switch message.body {
+        case .text(let text) where message.forwardedFrom == nil && Emoji.isJumbo(text):
+            // One to three emoji on their own: large and without a bubble, as in Messages.
+            Text(text.text)
+                .font(.system(size: 44))
+                .textSelection(.enabled)
         case .text(let text):
             richText(text)
         case .photo(let photo, _):
@@ -379,7 +436,7 @@ struct MessageBubble: View {
         case .placeholder(let text):
             Text(text)
                 .font(.callout.italic())
-                .opacity(0.8)
+                .opacity(dimmed(0.8))
         case .service(let text):
             Text(text)
         }
@@ -418,14 +475,35 @@ struct BubbleLayout: Layout {
     }
 }
 
-/// Formatted message text: selectable, with spoilers hidden until clicked.
+/// Formatted message text: selectable, with spoilers hidden until clicked. A link whose text
+/// doesn't name where it goes shows its address on hover and asks before it opens.
 struct RichTextView: View {
     let text: RichText
     let onAccent: Bool
     @State private var revealsSpoilers = false
+    @State private var linkToConfirm: URL?
 
     var body: some View {
+        content
+            .environment(\.openURL, OpenURLAction { url in
+                guard text.hidesDestination(of: url) else { return .systemAction }
+                linkToConfirm = url
+                return .handled
+            })
+            .confirmationDialog(
+                "Open this link?",
+                isPresented: Binding(get: { linkToConfirm != nil }, set: { if !$0 { linkToConfirm = nil } }),
+                presenting: linkToConfirm
+            ) { url in
+                Button("Open") { NSWorkspace.shared.open(url) }
+            } message: { url in
+                Text(url.absoluteString)
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         let view = Text(AttributedString(text, onAccent: onAccent, revealsSpoilers: revealsSpoilers))
+            .multilineTextAlignment(text.isRightToLeft ? .trailing : .leading)
         if text.hasSpoilers && !revealsSpoilers {
             // Selectable text takes every click for itself, so it only becomes selectable once
             // you've clicked to reveal the spoiler.
@@ -433,6 +511,9 @@ struct RichTextView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { revealsSpoilers = true }
                 .help("Click to reveal")
+        } else if case let destinations = text.hiddenLinkDestinations, !destinations.isEmpty {
+            view.textSelection(.enabled)
+                .help(destinations.map(\.absoluteString).joined(separator: "\n"))
         } else {
             view.textSelection(.enabled)
         }
@@ -474,13 +555,16 @@ struct ReplyQuote: View {
                 if !reply.senderName.isEmpty {
                     Text(reply.senderName)
                         .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Text(reply.text)
                     .font(.caption)
                     .lineLimit(1)
             }
         }
-        .opacity(0.8)
+        // White on the blue bubble has no contrast to spare.
+        .opacity(isOutgoing ? 1 : 0.8)
         .padding(.vertical, 2)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -488,15 +572,18 @@ struct ReplyQuote: View {
 
 extension AttributedString {
     /// Renders Telegram formatting. `onAccent` adapts links and mentions to the blue outgoing bubble.
+    /// Links are underlined, so they don't rely on color alone.
     init(_ rich: RichText, onAccent: Bool, revealsSpoilers: Bool) {
         var result = AttributedString(rich.text)
-        let utf16 = rich.text.utf16
-        for span in rich.spans {
+        // Spoilers last, so no other background shows through their cover.
+        let spans = rich.spans.filter { $0.style != .spoiler } + rich.spans.filter { $0.style == .spoiler }
+        for span in spans {
+            // Whole characters, so a span that ends inside an emoji still applies (a dropped
+            // spoiler would show its words).
             guard
-                let lower = utf16.index(utf16.startIndex, offsetBy: span.range.lowerBound, limitedBy: utf16.endIndex),
-                let upper = utf16.index(lower, offsetBy: span.range.count, limitedBy: utf16.endIndex),
-                let start = AttributedString.Index(lower, within: result),
-                let end = AttributedString.Index(upper, within: result),
+                let characters = rich.characterRange(of: span),
+                let start = AttributedString.Index(characters.lowerBound, within: result),
+                let end = AttributedString.Index(characters.upperBound, within: result),
                 start < end
             else { continue }
             let range = start..<end
@@ -504,17 +591,17 @@ extension AttributedString {
             case .bold: result.addIntent(.stronglyEmphasized, in: range)
             case .italic: result.addIntent(.emphasized, in: range)
             case .strikethrough: result.addIntent(.strikethrough, in: range)
-            case .code, .pre: result.addIntent(.code, in: range)
+            case .code, .pre:
+                result.addIntent(.code, in: range)
+                result[range].backgroundColor = .black.opacity(0.12)
             case .underline: result[range].underlineStyle = .single
             case .quote: result.addIntent(.emphasized, in: range)
             case .link(let url):
                 result[range].link = url
-                if onAccent {
-                    result[range].foregroundColor = .white
-                    result[range].underlineStyle = .single
-                }
+                result[range].foregroundColor = onAccent ? .white : MessagesStyle.linkOnIncoming
+                result[range].underlineStyle = .single
             case .mention:
-                result[range].foregroundColor = onAccent ? .white : .accentColor
+                result[range].foregroundColor = onAccent ? .white : MessagesStyle.linkOnIncoming
                 if onAccent { result.addIntent(.stronglyEmphasized, in: range) }
             case .spoiler where !revealsSpoilers:
                 // Hidden until you click the message.

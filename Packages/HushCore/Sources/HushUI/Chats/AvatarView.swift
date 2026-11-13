@@ -35,6 +35,8 @@ struct Avatar: View {
         content
             .frame(width: size, height: size)
             .clipShape(Circle())
+            // Always beside the name it pictures; initials read aloud ("A P") only repeat it.
+            .accessibilityHidden(true)
             .task(id: photoFileId) {
                 if let photoFileId { files.download(photoFileId) }
             }
@@ -94,8 +96,11 @@ enum AccentPalette {
 enum ImageCache {
     private static let cache = NSCache<NSString, NSImage>()
 
+    /// The file's modification date is part of the key: TDLib reuses file names after a logout,
+    /// and the path alone would show the previous account's picture.
     private static func key(_ url: URL, _ maxPixelSize: Int) -> NSString {
-        "\(url.path)#\(maxPixelSize)" as NSString
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
+        return "\(url.path)#\(modified)#\(maxPixelSize)" as NSString
     }
 
     static func cached(_ url: URL, maxPixelSize: Int) -> NSImage? {

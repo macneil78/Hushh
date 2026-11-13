@@ -21,18 +21,20 @@ struct SponsoredAdRow: View {
                     .onTapGesture { open(isMediaClick: false) }
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text(ad.label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(ad.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AccentPalette.color(for: ad.accentColorId))
-                    .onTapGesture { open(isMediaClick: false) }
-                content
-                    // The view only counts once the whole text is visible.
-                    .onScrollVisibilityChange(threshold: 0.99) { isVisible in
-                        if isVisible { conversation.sponsoredAdBecameFullyVisible() }
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(ad.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(ad.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AccentPalette.color(for: ad.accentColorId))
+                        .onTapGesture { open(isMediaClick: false) }
+                    content
+                }
+                // The view only counts once the whole ad is visible, the button aside.
+                .onScrollVisibilityChange(threshold: 0.99) { isVisible in
+                    conversation.sponsoredAdVisibilityChanged(isFullyVisible: isVisible)
+                }
                 if !ad.buttonText.isEmpty {
                     Button { open(isMediaClick: false) } label: {
                         Text(ad.buttonText).frame(maxWidth: .infinity)

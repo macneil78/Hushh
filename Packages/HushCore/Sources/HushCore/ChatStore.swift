@@ -12,8 +12,12 @@ public final class ChatStore {
     public private(set) var archiveList: [ChatItem] = []
     /// Unread messages in visible, unmuted chats of the main list.
     public private(set) var badgeCount = 0
-    /// True once both chat lists have been fully loaded from TDLib.
+    /// True once both chat lists have been fully loaded from TDLib, and the chats it counted
+    /// have arrived.
     public private(set) var isLoaded = false
+    /// The chats `chatsToChoose()` returns, so the "Choose Chats" sheet can add chats that
+    /// arrive while it's open.
+    public private(set) var choosableChatIds: Set<Int64> = []
     /// Why loading the chat lists stopped early, if it did.
     public private(set) var loadProblem: String?
 
@@ -126,14 +130,16 @@ public final class ChatStore {
     /// people you've hidden, most recently active first.
     public func chatsToChoose() -> [ChatItem] {
         items.values
-            .filter { item in
-                guard item.isIn(.main) || item.isIn(.archive) else { return false }
-                switch item.kind {
-                case .group, .channel, .bot, .service: return true
-                case .person, .savedMessages, .secret: return visibility.choices[item.id] == .hide
-                }
-            }
+            .filter(isChoosable)
             .sorted { ($0.lastActivity ?? Foundation.Date.distantPast) > ($1.lastActivity ?? Foundation.Date.distantPast) }
+    }
+
+    private func isChoosable(_ item: ChatItem) -> Bool {
+        guard item.isIn(.main) || item.isIn(.archive) else { return false }
+        switch item.kind {
+        case .group, .channel, .bot, .service: return true
+        case .person, .savedMessages, .secret: return visibility.choices[item.id] == .hide
+        }
     }
 
     // MARK: Actions
@@ -213,9 +219,8 @@ public final class ChatStore {
             }
         }
         guard self.client === client else { return }
-        isLoaded = true
         // TDLib's "all loaded" reply overtakes the updates still on their way, so wait for those
-        // before counting.
+        // before counting, and before the first-run "Choose Chats" sheet lists them.
         let start = ContinuousClock.now
         while self.client === client, ContinuousClock.now - start < .seconds(30) {
             let report = report()
@@ -224,6 +229,7 @@ public final class ChatStore {
             try? await Task.sleep(for: .milliseconds(250))
         }
         guard self.client === client else { return }
+        isLoaded = true
         Log.chats.notice("""
             All chats in place \((ContinuousClock.now - start).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))), privacy: .public) \
             after TDLib's reply. \(self.report().summary, privacy: .public)
@@ -341,6 +347,7 @@ public final class ChatStore {
         loadProblem = nil
         mainList = []
         archiveList = []
+        choosableChatIds = []
         isLoaded = false
         if badgeCount != 0 {
             badgeCount = 0
@@ -382,7 +389,8 @@ public final class ChatStore {
             scheduleRebuild()
         case .updateMessageContent(let update):
             guard let item = items[update.chatId], let message = item.lastMessage, message.id == update.messageId else { return }
-            refreshPreview(of: item, content: update.newContent)
+            item.lastContent = update.newContent
+            refreshPreview(of: item)
         case .updateChatDraftMessage(let update):
             guard let item = items[update.chatId] else { return }
             item.draft = MessagePreview.draftText(update.draftMessage)
@@ -488,6 +496,7 @@ public final class ChatStore {
         isRebuildScheduled = false
         var main: [(item: ChatItem, order: Int64)] = []
         var archive: [(item: ChatItem, order: Int64)] = []
+        var choosable: Set<Int64> = []
         for item in items.values {
             let kind = kind(of: item)
             if item.kind != kind {
@@ -496,6 +505,7 @@ public final class ChatStore {
             }
             let isMuted = isMuted(item)
             if item.isMuted != isMuted { item.isMuted = isMuted }
+            if isChoosable(item) { choosable.insert(item.id) }
 
             guard VisibilityPolicy.isVisible(summary(of: item), choice: visibility.choices[item.id]) else { continue }
             for position in item.positions {
@@ -514,6 +524,7 @@ public final class ChatStore {
         let newArchive = archive.sorted(by: byOrder).map(\.item)
         if !newMain.elementsEqual(mainList, by: ===) { mainList = newMain }
         if !newArchive.elementsEqual(archiveList, by: ===) { archiveList = newArchive }
+        if choosable != choosableChatIds { choosableChatIds = choosable }
 
         let badge = newMain.reduce(0) { $1.isMuted ? $0 : $0 + $1.unreadBadge }
         if badge != badgeCount {
@@ -548,25 +559,70 @@ public final class ChatStore {
         }
     }
 
-    private func refreshPreview(of item: ChatItem, content: MessageContent? = nil) {
+    private func refreshPreview(of item: ChatItem) {
         guard let message = item.lastMessage else {
             item.preview = ""
             item.lastActivity = nil
             return
         }
-        let text = MessagePreview.text(for: content ?? message.content)
+        let content = item.lastContent ?? message.content
+        let text = MessagePreview.text(for: content, selfDestructs: message.selfDestructType != nil)
         let preview: String
-        if message.isOutgoing, item.kind != .savedMessages {
+        if let event = eventText(content, of: message, in: item) {
+            preview = event
+        } else if message.isOutgoing, item.kind != .savedMessages {
             preview = "You: \(text)"
         } else if item.kind == .group, case .messageSenderUser(let sender) = message.senderId,
                   let name = users[sender.userId]?.firstName, !name.isEmpty {
-            preview = "\(name): \(text)"
+            preview = "\(Self.isolated(name)): \(text)"
         } else {
             preview = text
         }
         if item.preview != preview { item.preview = preview }
         let date = Foundation.Date(timeIntervalSince1970: TimeInterval(message.date))
         if item.lastActivity != date { item.lastActivity = date }
+    }
+
+    /// Events that need both who did it and to whom ("Alice added Bob", "You removed Carol"),
+    /// and a channel's start. The plain preview with a "Name:" in front would blame the wrong
+    /// person ("Alice: Left the group" when Alice removed Bob).
+    private func eventText(_ content: MessageContent, of message: Message, in item: ChatItem) -> String? {
+        if case .messageSupergroupChatCreate = content, item.kind == .channel {
+            return message.isOutgoing ? "You created the channel" : "Channel created"
+        }
+        guard item.kind == .group else { return nil }
+        let actorId: Int64? = if case .messageSenderUser(let sender) = message.senderId { sender.userId } else { nil }
+        let actor = message.isOutgoing ? "You" : actorId.map(memberName)
+        guard let actor else { return nil }
+        switch content {
+        case .messageChatAddMembers(let added) where added.memberUserIds != [actorId]:
+            let names = added.memberUserIds.map(memberName)
+            let list = switch names.count {
+            case 0: "members"
+            case 1: names[0]
+            case 2: "\(names[0]) and \(names[1])"
+            default: "\(names[0]) and \(names.count - 1) others"
+            }
+            return "\(actor) added \(list)"
+        case .messageChatDeleteMember(let removed) where removed.userId != actorId:
+            return "\(actor) removed \(memberName(removed.userId))"
+        default:
+            return nil
+        }
+    }
+
+    /// A group member's first name as a preview names them, or "you".
+    private func memberName(_ userId: Int64) -> String {
+        if userId == myUserId { return "you" }
+        guard let person = users[userId] else { return "a member" }
+        return Self.isolated(person.firstName.isEmpty ? person.name : person.firstName)
+    }
+
+    /// A name to put in front of other text: short enough to leave room for the message on two
+    /// lines, and isolated (FSI…PDI) so a right-to-left name doesn't turn the whole line around.
+    static func isolated(_ name: String) -> String {
+        let short = name.count > 24 ? name.prefix(23).trimmingCharacters(in: .whitespaces) + "…" : name
+        return "\u{2068}\(short)\u{2069}"
     }
 }
 

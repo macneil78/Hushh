@@ -62,3 +62,48 @@ struct SharedMediaTests {
         #expect(LinkRow.site(of: nil) == "Link")
     }
 }
+
+/// Chat Info's lists, fed by a TDLib client that never logs in.
+@MainActor
+struct ChatInfoTests {
+    /// A failed page of shared media can be tried again; the tab isn't taken for finished and
+    /// empty. TDLib refuses requests before it has its parameters, which stands in for being
+    /// offline.
+    @Test func aFailedSharedMediaPageCanBeTriedAgain() async {
+        let session = TDSession()
+        let media = SharedMediaModel(chatId: 1, client: session.client) { _ in nil }
+        await media.loadMore(.media)
+        #expect(media.didFail(.media))
+        #expect(media.hasMore(.media))
+        _ = try? await session.client.close()
+    }
+
+    /// Chat Info lists voice messages older than the chat's loaded history. Their transcription
+    /// and "played" state arrive as updates, and reach those rows too.
+    @Test func chatInfoVoiceMessagesGetTheirTranscription() async {
+        let session = TDSession()
+        let files = FileStore()
+        let conversation = ConversationModel(
+            chat: ChatItem(Fixtures.chat(1)), client: session.client, chats: ChatStore(files: files), voice: VoicePlayback()
+        )
+        conversation.sharedMedia.append([Fixtures.message(100, Fixtures.voiceNote(fileId: 9), chat: 1)], to: .voice)
+
+        let transcribed = Fixtures.voiceNote(fileId: 9, speech: .speechRecognitionResultText(SpeechRecognitionResultText(text: "See you at eight")))
+        conversation.handle(.updateMessageContent(UpdateMessageContent(chatId: 1, messageId: 100, newContent: transcribed)))
+        #expect(conversation.sharedMedia.items(.voice).first?.transcription == .done("See you at eight"))
+
+        conversation.handle(.updateMessageContentOpened(UpdateMessageContentOpened(chatId: 1, messageId: 100)))
+        guard case .voiceNote(let note, _) = conversation.sharedMedia.items(.voice).first?.body else {
+            Issue.record("not a voice message")
+            return
+        }
+        #expect(note.isListened)
+        _ = try? await session.client.close()
+    }
+
+    @Test func linkSitesAreReadable() throws {
+        #expect(LinkRow.site(of: URL(string: "https://пример.рф/путь")) == "xn--e1afmkfd.xn--p1ai")
+        #expect(LinkRow.site(of: URL(string: "https://WWW.Example.COM/a")) == "Example.COM")
+        #expect(LinkRow.site(of: URL(string: "tg://resolve?domain=hushh")) == "Telegram")
+    }
+}
