@@ -38,9 +38,13 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Save As goes through NSSavePanel, which grants the chosen file: no Downloads access.
         com.apple.security.files.user-selected.read-write: true
-        com.apple.security.files.downloads.read-write: true
         com.apple.security.device.audio-input: true
+        # The hardened runtime (Config/Base.xcconfig) only loads frameworks signed by the app's
+        # own team. A "Sign to Run Locally" build has no team, so this lets it load the embedded
+        # Lottie and TDLib frameworks. DYLD_* variables stay blocked.
+        com.apple.security.cs.disable-library-validation: true
     settings:
       base:
         SWIFT_VERSION: "6.0"
