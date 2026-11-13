@@ -94,7 +94,7 @@ struct ConversationModelTests {
         let model = readOnlyChannel()
         model.handle(Fixtures.newMessage(Fixtures.message(10, Fixtures.text("channel post"))))
         model.requestDeletion(of: model.messages)
-        await Fixtures.settle(600)
+        await Fixtures.wait { model.errorMessage != nil }
         #expect(model.pendingDeletion == nil)  // no "Delete for Me" that would fail
         #expect(model.errorMessage != nil)
     }
