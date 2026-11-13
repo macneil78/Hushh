@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 
@@ -18,6 +19,7 @@ struct MessageRow: View {
     /// Swipe left to reply; nil where there's nothing to reply in.
     var swipe: SwipeToReply?
     @State private var isPickingReaction = false
+    @Environment(\.assistant) private var assistant
 
     var body: some View {
         if case .service(let text) = message.body {
@@ -81,6 +83,13 @@ struct MessageRow: View {
             Button(message.plainText.isEmpty ? "Copy Transcript" : "Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(copied, forType: .string)
+            }
+        }
+        if let assistant, message.copyableText != nil {
+            if assistant.translations[message.id] != nil {
+                Button("Hide Translation") { assistant.hideTranslation(message.id) }
+            } else {
+                Button("Translate") { assistant.translate(message) }
             }
         }
         if message.isViewableMedia {
@@ -286,6 +295,8 @@ struct MessageBubble: View {
     var onPlayVoice: (URL) -> Void = { _ in }
 
     private var isOutgoing: Bool { message.isOutgoing }
+    @Environment(\.assistant) private var assistant
+    private var isTranslated: Bool { assistant?.translations[message.id] != nil }
     private var alignment: HorizontalAlignment { isOutgoing ? .trailing : .leading }
 
     var body: some View {
@@ -305,6 +316,9 @@ struct MessageBubble: View {
                 header
                 content
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if isTranslated {
+                    TranslationText(messageId: message.id, onAccent: isOutgoing)
+                }
             }
         }
     }
@@ -342,7 +356,12 @@ struct MessageBubble: View {
             media()
                 .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
             if !caption.isEmpty {
-                bubble(hasTail: hasTail) { richText(caption) }
+                bubble(hasTail: hasTail) {
+                    richText(caption)
+                    if isTranslated {
+                        TranslationText(messageId: message.id, onAccent: isOutgoing)
+                    }
+                }
             }
         }
     }

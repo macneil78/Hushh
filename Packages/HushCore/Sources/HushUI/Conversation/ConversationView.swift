@@ -16,7 +16,9 @@ struct ConversationView: View {
     var onClose: () -> Void = {}
     @Environment(ModelStore.self) private var models
     @Environment(\.vault) private var vault
+    @Environment(Codex.self) private var codex
     @State private var search: ChatSearch?
+    @State private var assistant: ChatAssistant?
     @State private var drop: DropState?
     @State private var now = Date.now
     @State private var height: CGFloat = 0
@@ -43,15 +45,22 @@ struct ConversationView: View {
                 .animation(.easeOut(duration: 0.2), value: conversation.notice)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                if !isSearching, let pinned = conversation.pinnedMessage {
-                    PinnedBar(message: pinned) {
-                        Task {
-                            if !(await conversation.reveal(pinned.id)) {
-                                conversation.errorMessage = "The pinned message is too far back to jump to."
+                if !isSearching {
+                    VStack(spacing: 0) {
+                        if let pinned = conversation.pinnedMessage {
+                            PinnedBar(message: pinned) {
+                                Task {
+                                    if !(await conversation.reveal(pinned.id)) {
+                                        conversation.errorMessage = "The pinned message is too far back to jump to."
+                                    }
+                                }
+                            } onUnpin: {
+                                conversation.setPinned(pinned, false)
                             }
                         }
-                    } onUnpin: {
-                        conversation.setPinned(pinned, false)
+                        if let assistant, let summary = assistant.summary {
+                            SummaryCard(work: summary, onRetry: assistant.catchUp, onClose: assistant.dismissSummary)
+                        }
                     }
                 }
             }
@@ -76,6 +85,7 @@ struct ConversationView: View {
             .onDisappear { search?.stop() }
             .background(MessagesStyle.background)
             .environment(\.conversation, conversation)
+            .environment(\.assistant, codex.isAvailable ? assistant : nil)
             .environment(\.stickerLibrary, stickers)
         // Drop files anywhere on the conversation: top half as files, bottom half as photos and videos.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
@@ -89,6 +99,20 @@ struct ConversationView: View {
             if let drop { DropZonesOverlay(state: drop) }
         }
         .quickLookPreview($conversation.quickLookURL)
+        .toolbar {
+            if codex.isAvailable, let assistant {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Catch Up", systemImage: "sparkles", action: assistant.catchUp)
+                        .help("Catch up: what you missed in this chat, summed up by Codex")
+                        .disabled(assistant.summary == .working)
+                }
+            }
+        }
+        .onAppear {
+            if assistant == nil {
+                assistant = ChatAssistant(conversation: conversation, codex: codex, files: files, vault: vault, chatTitle: chat.displayTitle)
+            }
+        }
         .sheet(isPresented: Binding(
             get: { conversation.forwarding != nil },
             set: { if !$0 { conversation.forwarding = nil } }

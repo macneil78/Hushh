@@ -38,6 +38,14 @@ public final class FileStore {
         handle(for: id).localURL = url
     }
 
+    /// The file on disk, downloading it first (and waiting) if needed. Nil if that fails.
+    public func localFile(_ id: Int) async -> URL? {
+        if let url = handle(for: id).localURL { return url }
+        guard let client, let file = try? await client.downloadFile(fileId: id, limit: 0, offset: 0, priority: 16, synchronous: true) else { return nil }
+        apply(file)
+        return handle(for: id).localURL
+    }
+
     public func download(_ id: Int, priority: Int = 1) {
         guard let client, handle(for: id).localURL == nil, requested.insert(id).inserted else { return }
         Task {

@@ -161,7 +161,8 @@ extension TDLibClient {
         query: String = "",
         filter: SearchMessagesFilter?,
         fromMessageId: Int64,
-        limit: Int
+        limit: Int,
+        senderId: MessageSender? = nil
     ) async throws -> FoundChatMessages {
         let query = SearchChatMessages(
             chatId: chatId,
@@ -170,7 +171,7 @@ extension TDLibClient {
             limit: limit,
             offset: 0,
             query: query,
-            senderId: nil,
+            senderId: senderId,
             topicId: nil
         )
         return try await resilientRun(query) { try ResilientDecoding.decode(FoundChatMessages.self, from: $0, decoder: $1) }

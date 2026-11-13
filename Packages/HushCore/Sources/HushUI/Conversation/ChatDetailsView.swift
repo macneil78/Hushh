@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 
@@ -13,6 +14,8 @@ struct ChatDetailsView: View {
     let onClose: () -> Void
     @State private var kind = SharedMediaKind.media
     @FocusState private var isFocused: Bool
+    @Environment(\.vault) private var vault
+    @Environment(Codex.self) private var codex
 
     private var media: SharedMediaModel { conversation.sharedMedia }
 
@@ -59,6 +62,10 @@ struct ChatDetailsView: View {
             if !subtitle.isEmpty {
                 Text(subtitle)
                     .foregroundStyle(.secondary)
+            }
+            if codex.isAvailable, ChatMemory.isEnabled, let vault {
+                MemoryCard(chatId: chat.id, vault: vault)
+                    .padding(.top, 14)
             }
         }
         .padding(.horizontal, 16)

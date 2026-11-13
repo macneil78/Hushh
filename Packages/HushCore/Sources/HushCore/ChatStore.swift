@@ -23,7 +23,7 @@ public final class ChatStore {
     let visibility = VisibilitySettings()
     @ObservationIgnored private let files: FileStore
     @ObservationIgnored private var client: TDLibClient?
-    @ObservationIgnored private var myUserId: Int64?
+    @ObservationIgnored private(set) var myUserId: Int64?
     @ObservationIgnored private var items: [Int64: ChatItem] = [:]
     @ObservationIgnored private var users: [Int64: Person] = [:]
     @ObservationIgnored private var directMessagesGroupIds: Set<Int64> = []

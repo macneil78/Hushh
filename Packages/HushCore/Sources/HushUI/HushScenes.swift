@@ -12,6 +12,8 @@ public struct HushScenes: Scene {
     @State private var window = WindowState()
     /// On-device AI models, shared by every account.
     @State private var models = ModelStore()
+    /// Codex, for Catch Up, drafts and translations, if it's set up.
+    @State private var codex = Codex()
 
     public init(model: AppModel) {
         self.model = model
@@ -27,6 +29,7 @@ public struct HushScenes: Scene {
             } else {
                 RootView(model: model, window: window)
                     .environment(models)
+                    .environment(codex)
                     .frame(minWidth: 760, minHeight: 520)
                     .task { model.start() }
             }
@@ -38,6 +41,7 @@ public struct HushScenes: Scene {
         Settings {
             SettingsView(model: model)
                 .environment(models)
+                .environment(codex)
         }
     }
 }

@@ -366,6 +366,29 @@ public final class ConversationModel {
         return (page.messages ?? []).filter { messageId == 0 || $0.id < messageId }.compactMap(model(for:))
     }
 
+    /// The latest `count` messages, oldest first, loading older history from Telegram when fewer
+    /// are loaded. What's on screen stays as it is.
+    public func recentMessages(_ count: Int) async -> [MessageModel] {
+        var result = messages
+        while result.count < count, let oldest = result.first?.id {
+            guard let page = try? await historyPage(before: oldest, limit: 100), !page.isEmpty else { break }
+            let known = Set(result.map(\.id))
+            result = (page.filter { !known.contains($0.id) } + result).sorted { $0.id < $1.id }
+        }
+        return Array(result.suffix(count))
+    }
+
+    /// Your own latest messages here, however far back, oldest first: how you write to this
+    /// person. At most 100, Telegram's limit for one search.
+    public func myRecentMessages(_ limit: Int) async -> [MessageModel] {
+        guard let me = chats.myUserId,
+              let found = try? await client.resilientSearchChatMessages(
+                chatId: chatId, filter: nil, fromMessageId: 0, limit: min(limit, 100),
+                senderId: .messageSenderUser(MessageSenderUser(userId: me))
+              ) else { return [] }
+        return found.messages.compactMap(model(for:)).sorted { $0.id < $1.id }
+    }
+
     /// Messages containing the words, across the chat's whole history: Telegram's own search.
     public func searchMessages(_ query: String, limit: Int = 50) async throws -> [MessageModel] {
         let found = try await client.resilientSearchChatMessages(chatId: chatId, query: query, filter: nil, fromMessageId: 0, limit: limit)

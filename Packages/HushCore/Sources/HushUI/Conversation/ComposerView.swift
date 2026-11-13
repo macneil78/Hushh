@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -17,6 +18,7 @@ struct ComposerView: View {
     @State private var editorHeight: CGFloat = 30
     @State private var isPickingFiles = false
     @State private var isPickingSticker = false
+    @Environment(\.assistant) private var assistant
 
     private var isEditing: Bool { conversation.editing != nil }
 
@@ -37,6 +39,9 @@ struct ComposerView: View {
                 }
                 if !conversation.attachments.isEmpty {
                     AttachmentStrip(attachments: conversation.attachments, onRemove: conversation.removeAttachment)
+                }
+                if let assistant, assistant.canUndoWriting {
+                    WrittenByCodexBar(onUndo: assistant.undoWriting)
                 }
                 if conversation.recorder.state != .idle {
                     RecordingBar(recorder: conversation.recorder, onCancel: conversation.cancelRecording, onSend: conversation.finishRecording)
@@ -126,6 +131,10 @@ struct ComposerView: View {
                         .padding(.top, 6)
                         .allowsHitTesting(false)
                 }
+            }
+            if let assistant, !isEditing {
+                AssistantMenu(assistant: assistant, hasText: !conversation.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.bottom, 3)
             }
             stickerButton
                 .padding(.bottom, 3)

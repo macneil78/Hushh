@@ -29,4 +29,11 @@ fi
 rm -rf /Applications/Hushh.app
 cp -R "$app" /Applications/
 echo "Installed /Applications/Hushh.app"
+
+# Codex features (Catch Up, Draft, Polish, Translate) go through this script, which macOS runs
+# for Hushh outside its sandbox. Harmless without Codex: Hushh then just doesn't offer them.
+scripts_dir="$HOME/Library/Application Scripts/com.macneil.Hush"
+mkdir -p "$scripts_dir"
+cp scripts/codex-bridge.sh "$scripts_dir/"
+chmod +x "$scripts_dir/codex-bridge.sh"
 open /Applications/Hushh.app

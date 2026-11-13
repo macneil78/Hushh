@@ -23,7 +23,7 @@ struct SettingsView: View {
                 NotificationSettings(preferences: model.notificationPreferences)
             }
             Tab("AI", systemImage: "sparkles") {
-                AISettings()
+                AISettings(vault: model.vault)
             }
             Tab("About", systemImage: "info.circle") {
                 AboutSettings(model: model)
@@ -108,6 +108,7 @@ struct NotificationSettings: View {
 
 /// The on-device models: what each does, how big it is, and getting or removing it.
 struct AISettings: View {
+    let vault: LocalVault?
     @Environment(ModelStore.self) private var models
 
     var body: some View {
@@ -122,9 +123,10 @@ struct AISettings: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            CodexSettingsSection(vault: vault)
         }
         .formStyle(.grouped)
-        .frame(height: 300)
+        .frame(height: 600)
     }
 
     private func row(_ model: AIModel) -> some View {
