@@ -480,7 +480,7 @@ final class LoopingPlayerView: NSView {
         self.url = url
         let player = AVQueuePlayer()
         player.isMuted = isMuted
-        looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+        looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(asset: PlayableFile.asset(at: url)))
         playerLayer.player = player
         self.player = player
         player.play()

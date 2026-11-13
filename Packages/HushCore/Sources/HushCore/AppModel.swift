@@ -246,7 +246,7 @@ public final class AppModel {
             vault = LocalVault(directory: configuration.accountDirectory(for: me.id).appending(path: "ai", directoryHint: .isDirectory), databaseKey: key)
         }
         let settingsFile = configuration.accountDirectory(for: me.id).appending(path: "visibility.json")
-        chats.attach(client: client, myUserId: me.id, settingsFile: settingsFile)
+        chats.attach(client: client, myUserId: me.id, isPremium: me.isPremium, settingsFile: settingsFile)
         // After your visibility choices are loaded, so hidden chats are filtered from the start.
         notifications.start(session: session)
         await chats.loadLists()

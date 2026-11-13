@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -19,6 +20,7 @@ struct ComposerView: View {
     @State private var editorHeight: CGFloat = 30
     @State private var isPickingFiles = false
     @State private var isPickingSticker = false
+    @Environment(\.assistant) private var assistant
 
     private var isEditing: Bool { conversation.editing != nil }
 
@@ -39,6 +41,9 @@ struct ComposerView: View {
                 }
                 if !conversation.attachments.isEmpty {
                     AttachmentStrip(attachments: conversation.attachments, onRemove: conversation.removeAttachment)
+                }
+                if let assistant, assistant.canUndoWriting {
+                    WrittenByCodexBar(onUndo: assistant.undoWriting)
                 }
                 if conversation.recorder.state != .idle {
                     RecordingBar(recorder: conversation.recorder, onCancel: conversation.cancelRecording, onSend: conversation.finishRecording)
@@ -108,7 +113,8 @@ struct ComposerView: View {
                 text: $conversation.composerText,
                 height: $editorHeight,
                 focusRequest: conversation.focusRequest,
-                onSubmit: conversation.send,
+                onSubmit: { conversation.send() },
+                onSubmitSilently: { conversation.send(silently: true) },
                 onUpArrowInEmptyComposer: conversation.editLastMessage,
                 onEscape: {
                     if isPickingSticker {
@@ -132,6 +138,10 @@ struct ComposerView: View {
                         .padding(.top, 6)
                         .allowsHitTesting(false)
                 }
+            }
+            if let assistant, !isEditing {
+                AssistantMenu(assistant: assistant, hasText: !conversation.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.bottom, 3)
             }
             stickerButton
                 .padding(.bottom, 3)
@@ -158,6 +168,12 @@ struct ComposerView: View {
             .font(.system(size: 22))
             .foregroundStyle(MessagesStyle.outgoing)
             .disabled(!conversation.canSend)
+            .help(isEditing ? "Save" : "Send (⌥↩ sends without sound)")
+            .contextMenu {
+                if !isEditing {
+                    Button("Send Without Sound") { conversation.send(silently: true) }
+                }
+            }
         } else if conversation.recorder.state == .idle {
             Button("Record Voice Message", systemImage: "waveform", action: conversation.startRecording)
                 .labelStyle(.iconOnly)
@@ -249,6 +265,8 @@ struct ComposerTextView: NSViewRepresentable {
     /// Takes keyboard focus whenever this changes.
     let focusRequest: Int
     let onSubmit: () -> Void
+    /// ⌥↩: Telegram's "Send Without Sound".
+    var onSubmitSilently: () -> Void = {}
     let onUpArrowInEmptyComposer: () -> Bool
     let onEscape: () -> Bool
     let onTextChange: () -> Void
@@ -348,6 +366,11 @@ struct ComposerTextView: NSViewRepresentable {
                 return true
             case #selector(NSResponder.insertBacktab(_:)):
                 textView.window?.selectPreviousKeyView(nil)
+                return true
+            case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+                // ⌥↩ sends without a notification sound; ⇧↩ still starts a new line.
+                guard NSApp.currentEvent?.modifierFlags.contains(.option) == true else { return false }
+                parent.onSubmitSilently()
                 return true
             case #selector(NSResponder.moveUp(_:)):
                 return textView.string.isEmpty && parent.onUpArrowInEmptyComposer()

@@ -298,6 +298,18 @@ extension TDLibClient {
         return try await resilientRun(query) { try ResilientDecoding.decode(Messages.self, from: $0, decoder: $1) }
     }
 
+    /// The chat's newest pinned message; nil when there's none.
+    func resilientPinnedMessage(chatId: Int64) async -> Message? {
+        try? await resilientRun(GetChatPinnedMessage(chatId: chatId)) {
+            try ResilientDecoding.decode(Message.self, from: $0, decoder: $1)
+        }
+    }
+
+    /// Runs a query for its effect, ignoring what comes back (which TDLibKit may not decode).
+    func resilientRunIgnoringResult<Query: Codable>(_ query: Query) async throws {
+        try await resilientRun(query) { _, _ in }
+    }
+
     /// `getMessage`, tolerant of messages TDLibKit can't decode.
     func resilientMessage(chatId: Int64, messageId: Int64) async throws -> Message {
         try await resilientRun(GetMessage(chatId: chatId, messageId: messageId)) {

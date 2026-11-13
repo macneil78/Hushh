@@ -5,6 +5,8 @@ import SwiftUI
 extension EnvironmentValues {
     /// Hovering a message shows its time and a react button; off for the screenshot demo.
     @Entry var showsHoverDetails = true
+    /// Custom emoji for reactions come from here.
+    @Entry var stickerLibrary: StickerLibrary?
 }
 
 /// The look of the Mac's Messages app: blue bubbles for you, grey for them, tails on the last
@@ -117,6 +119,7 @@ struct TimestampHeading: View {
 /// them is yours.
 struct TapbackBadge: View {
     let reactions: [Reaction]
+    let files: FileStore
     let onTap: () -> Void
 
     /// How far the badge may reach past the bubble toward the middle of the window: within the
@@ -137,11 +140,7 @@ struct TapbackBadge: View {
         Button(action: onTap) {
             HStack(spacing: 2) {
                 ForEach(reactions.prefix(3)) { reaction in
-                    switch reaction.kind {
-                    case .emoji(let emoji): Text(Emoji.colorful(emoji))
-                    case .customEmoji: Image(systemName: "face.smiling")
-                    case .paid: Image(systemName: "star.fill").foregroundStyle(.yellow)
-                    }
+                    ReactionGlyph(kind: reaction.kind, size: 14, files: files)
                 }
                 if total > 1 {
                     Text("\(total)")

@@ -62,6 +62,7 @@ In the message box:
 | Keys | Action |
 |---|---|
 | Enter | Send |
+| Option+Enter | Send without sound |
 | Shift+Enter, ⌃Enter | New line |
 | ↑ | Edit your last message (box empty) |
 | Tab, ⇧Tab | Next or previous control |
@@ -108,10 +109,40 @@ encrypted: they are plain files in `tdlib/files`. The model lives in
 Logging out deletes this Mac's copy of the account: TDLib's database and downloaded files, the
 search indexes, the list of chats you hid, and the database key. The search model stays.
 
+## Codex (optional)
+
+With OpenAI's [Codex](https://developers.openai.com/codex) installed and signed in with your
+ChatGPT account (`codex login`), Hushh can help with writing and reading:
+
+- **Catch Up**: the sparkles button in a chat's toolbar sums up what you missed in a few points,
+  including what photos show.
+- **Draft a Reply**: the sparkles menu in the message box writes your next message from the last
+  150 messages, in the style you use with that person. Whatever you've typed is taken as a hint
+  ("say yes but at 8").
+- **Polish**: fix spelling, make it shorter, friendlier or more formal, or translate what you've
+  typed. Undo brings your text back.
+- **Translate**: right-click a message, then Translate. The translation shows under it.
+- **Memory**: a short note per chat (language, tone, names, plans) that Codex keeps up to date
+  while it catches you up or drafts, so it knows who you're talking to. It's encrypted with the
+  search indexes. Read, edit or clear it in Chat Info, or turn it off in Settings → AI.
+
+What leaves your Mac: only when you click one of these, Hushh sends Codex the messages that request
+needs (the unread ones, the recent conversation with up to 4–6 recent photos shrunk to 768 px, or
+the one message to translate), plus that chat's note. Codex sends them to OpenAI. Each request
+counts toward your ChatGPT plan's Codex limits, roughly 10–15k tokens, and takes a few seconds.
+It uses GPT-6.1 Sol by default; Settings → AI switches to GPT-6 Luna.
+
+Hushh runs in the macOS app sandbox and can't start other programs. It reaches Codex through
+[`scripts/codex-bridge.sh`](scripts/codex-bridge.sh), which macOS runs for it from
+`~/Library/Application Scripts/com.macneil.Hush` outside the sandbox. `scripts/install.sh`
+(Release build into /Applications) copies it there; for a build from Xcode, use Settings → AI →
+Set Up…. Without the script, Hushh shows none of these buttons.
+
 ## Develop
 
 - All code lives in `Packages/HushCore`:
   - `HushCore`: the TDLib session, login, and the chat filter (`VisibilityPolicy`).
+  - `HushAI`: search by meaning, and the Codex features (`Codex`, `ChatAssistant`, `ChatMemory`).
   - `HushUI`: the SwiftUI views.
   - `HushAI`: search by meaning (the model, its download and the search indexes).
   - The Xcode app target only contains `App/HushApp.swift`.
@@ -119,6 +150,8 @@ search indexes, the list of chats you hid, and the database key. The search mode
 - To build and test without the app, run `cd Packages/HushCore && swift build && swift test`.
   This needs Xcode too. To use Xcode without changing `xcode-select`, first run
   `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+- `scripts/install.sh` builds a Release copy into /Applications and installs the Codex bridge.
+  Quit Hushh first.
 - `swift run hush-smoke` checks that TDLib loads on this Mac. It needs no credentials.
 - `swift scripts/make-icon.swift` redraws the app icon.
 - `scripts/demo.sh [--dark|--light] [path/to/Hushh.app]` opens Hushh with made-up chats, for screenshots: it does not log in to

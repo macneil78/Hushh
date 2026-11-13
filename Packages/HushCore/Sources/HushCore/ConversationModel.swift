@@ -119,6 +119,7 @@ public final class ConversationModel {
     func open() async {
         isOpen = true
         focusRequest += 1
+        refreshPinnedMessage()
         let chatId = chatId
         let client = client
         _ = try? await client.openChat(chatId: chatId)
@@ -229,6 +230,111 @@ public final class ConversationModel {
         return true
     }
 
+    /// Telegram's "Send Without Sound": the message arrives without a notification sound.
+    nonisolated static func sendOptions(silently: Bool) -> MessageSendOptions? {
+        guard silently else { return nil }
+        return MessageSendOptions(
+            allowPaidBroadcast: false, disableNotification: true, effectId: 0, fromBackground: false,
+            onlyPreview: false, paidMessageStarCount: 0, protectContent: false, schedulingState: nil,
+            sendingId: 0, suggestedPostInfo: nil, updateOrderOfInstalledStickerSets: false
+        )
+    }
+
+    // MARK: Forwarding and selecting
+
+    /// Messages waiting for a chat to forward them to (the picker is open).
+    public var forwarding: [MessageModel]?
+    /// Messages picked with Select, to forward, copy or delete together. Nil when not selecting.
+    public private(set) var selection: Set<Int64>?
+    /// A short confirmation, like "Forwarded to Emma", gone after a moment.
+    public private(set) var notice: String?
+
+    /// Starts picking messages, with these already picked (an album's items go together).
+    public func startSelecting(_ messages: [MessageModel] = []) {
+        selection = Set(messages.map(\.id))
+    }
+
+    /// Picks the messages, or unpicks them if they all were.
+    public func toggleSelected(_ ids: [Int64]) {
+        guard var selection else { return }
+        if ids.allSatisfy(selection.contains) {
+            selection.subtract(ids)
+        } else {
+            selection.formUnion(ids)
+        }
+        self.selection = selection
+    }
+
+    public func endSelecting() {
+        selection = nil
+    }
+
+    /// The picked messages, oldest first.
+    public var selectedMessages: [MessageModel] {
+        guard let selection else { return [] }
+        return messages.filter { selection.contains($0.id) }
+    }
+
+    /// Forwards messages to a chat, in order, with "Forwarded from", as Telegram does.
+    @discardableResult
+    public func forward(_ forwarded: [MessageModel], to targetChatId: Int64, named title: String) async -> Bool {
+        let query = ForwardMessages(
+            chatId: targetChatId, fromChatId: chatId, messageIds: forwarded.map(\.id).sorted(), options: nil,
+            removeCaption: false, sendCopy: false, topicId: nil
+        )
+        do {
+            try await client.resilientRunIgnoringResult(query)
+            show(notice: targetChatId == chatId ? "Forwarded" : "Forwarded to \(title)")
+            return true
+        } catch {
+            errorMessage = AuthModel.describe(error)
+            return false
+        }
+    }
+
+    private func show(notice: String) {
+        self.notice = notice
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if self.notice == notice { self.notice = nil }
+        }
+    }
+
+    /// Text to copy for messages: just the text for one; "Name: text" lines for several.
+    public static func copiedText(of copied: [MessageModel]) -> String {
+        let texts = copied.map { $0.copyableText ?? $0.previewText }
+        guard copied.count > 1 else { return texts.first ?? "" }
+        return zip(copied, texts).map { "\($0.isOutgoing ? "You" : $0.sender.name): \($1)" }.joined(separator: "\n")
+    }
+
+    // MARK: Pinned messages
+
+    /// The newest pinned message, for the bar at the top of the chat.
+    public private(set) var pinnedMessage: MessageModel?
+
+    /// Pins a message for both of you, without a notification, or unpins it.
+    public func setPinned(_ message: MessageModel, _ isPinned: Bool) {
+        let chatId = chatId
+        let client = client
+        Task {
+            do {
+                if isPinned {
+                    _ = try await client.pinChatMessage(chatId: chatId, disableNotification: true, messageId: message.id, onlyForSelf: false)
+                } else {
+                    _ = try await client.unpinChatMessage(chatId: chatId, messageId: message.id)
+                }
+            } catch {
+                errorMessage = AuthModel.describe(error)
+            }
+        }
+    }
+
+    private func refreshPinnedMessage() {
+        Task {
+            pinnedMessage = await client.resilientPinnedMessage(chatId: chatId).flatMap(model(for:))
+        }
+    }
+
     // MARK: Jumping to a message
 
     /// Asks the view to scroll to a message. A new one each time, so asking again scrolls again.
@@ -312,6 +418,29 @@ public final class ConversationModel {
         return (page.messages ?? []).filter { messageId == 0 || $0.id < messageId }.compactMap(model(for:))
     }
 
+    /// The latest `count` messages, oldest first, loading older history from Telegram when fewer
+    /// are loaded. What's on screen stays as it is.
+    public func recentMessages(_ count: Int) async -> [MessageModel] {
+        var result = messages
+        while result.count < count, let oldest = result.first?.id {
+            guard let page = try? await historyPage(before: oldest, limit: 100), !page.isEmpty else { break }
+            let known = Set(result.map(\.id))
+            result = (page.filter { !known.contains($0.id) } + result).sorted { $0.id < $1.id }
+        }
+        return Array(result.suffix(count))
+    }
+
+    /// Your own latest messages here, however far back, oldest first: how you write to this
+    /// person. At most 100, Telegram's limit for one search.
+    public func myRecentMessages(_ limit: Int) async -> [MessageModel] {
+        guard let me = chats.myUserId,
+              let found = try? await client.resilientSearchChatMessages(
+                chatId: chatId, filter: nil, fromMessageId: 0, limit: min(limit, 100),
+                senderId: .messageSenderUser(MessageSenderUser(userId: me))
+              ) else { return [] }
+        return found.messages.compactMap(model(for:)).sorted { $0.id < $1.id }
+    }
+
     /// Messages containing the words, across the chat's whole history: Telegram's own search.
     public func searchMessages(_ query: String, limit: Int = 50) async throws -> [MessageModel] {
         let found = try await client.resilientSearchChatMessages(chatId: chatId, query: query, filter: nil, fromMessageId: 0, limit: limit)
@@ -361,10 +490,12 @@ public final class ConversationModel {
     /// as several messages, as in Telegram's own apps.
     static let maxMessageLength = 4096
 
-    public func send() {
+    /// Sends what's in the message box. `silently` is Telegram's "Send Without Sound" (⌥↩): it
+    /// arrives without a notification sound, for late at night.
+    public func send(silently: Bool = false) {
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         if editing == nil, !attachments.isEmpty {
-            sendAttachments(caption: text)
+            sendAttachments(caption: text, silently: silently)
             return
         }
         guard !text.isEmpty else { return }
@@ -390,7 +521,7 @@ public final class ConversationModel {
                 var replyTo = Self.replyTo(reply?.id)
                 for part in Self.split(formatted, limit: Self.maxMessageLength) {
                     let content = InputMessageContent.inputMessageText(InputMessageText(clearDraft: true, linkPreviewOptions: nil, text: part))
-                    _ = try await client.sendMessage(chatId: chatId, inputMessageContent: content, options: nil, replyMarkup: nil, replyTo: replyTo, topicId: nil)
+                    _ = try await client.sendMessage(chatId: chatId, inputMessageContent: content, options: Self.sendOptions(silently: silently), replyMarkup: nil, replyTo: replyTo, topicId: nil)
                     replyTo = nil
                     sent += 1
                 }
@@ -607,7 +738,7 @@ public final class ConversationModel {
     /// files, and anything Hushh couldn't read as a photo or video, follow one by one. The
     /// caption goes on the first item. If something fails, what hasn't gone out comes back to
     /// the composer, with the caption and reply when nothing went out at all.
-    private func sendAttachments(caption: String) {
+    private func sendAttachments(caption: String, silently: Bool) {
         let items = attachments
         let reply = replyingTo
         let draft = savedDraft
@@ -620,13 +751,14 @@ public final class ConversationModel {
         Task {
             var unsent = items
             do {
+                let options = Self.sendOptions(silently: silently)
                 let formattedCaption = caption.isEmpty ? nil : try await client.parseMarkdown(text: FormattedText(entities: [], text: caption))
                 var replyTo = Self.replyTo(reply?.id)
                 for batch in await Self.batches(items, caption: formattedCaption) {
                     if batch.contents.count == 1 {
-                        _ = try await client.sendMessage(chatId: chatId, inputMessageContent: batch.contents[0], options: nil, replyMarkup: nil, replyTo: replyTo, topicId: nil)
+                        _ = try await client.sendMessage(chatId: chatId, inputMessageContent: batch.contents[0], options: options, replyMarkup: nil, replyTo: replyTo, topicId: nil)
                     } else {
-                        _ = try await client.sendMessageAlbum(chatId: chatId, inputMessageContents: batch.contents, options: nil, replyTo: replyTo, topicId: nil)
+                        _ = try await client.sendMessageAlbum(chatId: chatId, inputMessageContents: batch.contents, options: options, replyTo: replyTo, topicId: nil)
                     }
                     replyTo = nil
                     unsent.removeAll { batch.ids.contains($0.id) }
@@ -922,27 +1054,64 @@ public final class ConversationModel {
 
     // MARK: Reactions
 
-    /// The emoji this chat allows as reactions.
-    public var reactionChoices: [String] {
+    /// The reactions this chat allows.
+    public var reactionChoices: [Reaction.Kind] {
         chats.reactionChoices(for: chatId)
     }
 
+    /// What the reaction picker offers for a message, as Telegram's own apps lay it out.
+    public struct ReactionOptions: Equatable, Sendable {
+        /// The first row: the ones you use most, then the chat's favourites.
+        public var top: [Reaction.Kind]
+        /// Your recent reactions, then popular ones, not already in the first row.
+        public var more: [Reaction.Kind]
+        /// Whether any custom emoji from your packs can be used (Premium, where the chat allows).
+        public var allowsCustomEmoji: Bool
+        /// Why you can't react here, though others can.
+        public var unavailableReason: String?
+    }
+
+    /// Asks Telegram which reactions you can add to this message. TDLib answers from its cache.
+    public func reactionOptions(for message: MessageModel) async -> ReactionOptions {
+        guard let available = try? await client.getMessageAvailableReactions(chatId: chatId, messageId: message.id, rowSize: 8) else {
+            return ReactionOptions(top: reactionChoices, more: [], allowsCustomEmoji: false, unavailableReason: nil)
+        }
+        return Self.reactionOptions(from: available, isPremium: chats.isPremium)
+    }
+
+    /// Premium-only reactions are left out for everyone else rather than shown locked.
+    nonisolated static func reactionOptions(from available: AvailableReactions, isPremium: Bool) -> ReactionOptions {
+        func kinds(_ reactions: [AvailableReaction]) -> [Reaction.Kind] {
+            reactions.filter { isPremium || !$0.needsPremium }.compactMap { Reaction.Kind($0.type) }
+        }
+        let top = kinds(available.topReactions)
+        var seen = Set(top)
+        let more = (kinds(available.recentReactions) + kinds(available.popularReactions)).filter { seen.insert($0).inserted }
+        let reason: String? = switch available.unavailabilityReason {
+        case .reactionUnavailabilityReasonAnonymousAdministrator: "You're posting anonymously, so you can't react."
+        case .reactionUnavailabilityReasonGuest: "Join the chat to react."
+        case .reactionUnavailabilityReasonRestricted: "Reactions are restricted for you in this chat."
+        case nil: nil
+        }
+        return ReactionOptions(top: top, more: more, allowsCustomEmoji: available.allowCustomEmoji && isPremium, unavailableReason: reason)
+    }
+
     /// Adds your reaction, or takes it back if you'd already chosen it.
-    public func toggleReaction(_ emoji: String, on message: MessageModel) {
-        let isChosen = message.reactions.contains { $0.kind == .emoji(emoji) && $0.isChosen }
+    public func toggleReaction(_ kind: Reaction.Kind, on message: MessageModel) {
+        guard let reaction = kind.reactionType else { return }
+        let isChosen = message.reactions.contains { $0.kind == kind && $0.isChosen }
         let chatId = chatId
         let client = client
         Task {
             do {
-                try await Self.setReaction(emoji, chosen: !isChosen, messageId: message.id, chatId: chatId, client: client)
+                try await Self.setReaction(reaction, chosen: !isChosen, messageId: message.id, chatId: chatId, client: client)
             } catch {
                 errorMessage = AuthModel.describe(error)
             }
         }
     }
 
-    private nonisolated static func setReaction(_ emoji: String, chosen: Bool, messageId: Int64, chatId: Int64, client: TDLibClient) async throws {
-        let reaction = ReactionType.reactionTypeEmoji(ReactionTypeEmoji(emoji: emoji))
+    private nonisolated static func setReaction(_ reaction: ReactionType, chosen: Bool, messageId: Int64, chatId: Int64, client: TDLibClient) async throws {
         if chosen {
             _ = try await client.addMessageReaction(chatId: chatId, isBig: false, messageId: messageId, reactionType: reaction, updateRecentReactions: true)
         } else {
@@ -1108,6 +1277,7 @@ public final class ConversationModel {
 
     public func delete(_ deletion: PendingDeletion, forEveryone: Bool) {
         pendingDeletion = nil
+        selection = nil
         let chatId = chatId
         let client = client
         Task {
@@ -1194,6 +1364,11 @@ public final class ConversationModel {
             } else {
                 remove([message.id])
             }
+        case .updateMessageIsPinned(let update) where update.chatId == chatId:
+            if let index = messages.firstIndex(where: { $0.id == update.messageId }) {
+                messages[index].isPinned = update.isPinned
+            }
+            refreshPinnedMessage()
         case .updateMessageInteractionInfo(let update) where update.chatId == chatId:
             guard let index = index(of: update.messageId) else { return }
             let reactions = Self.reactions(update.interactionInfo)
@@ -1394,7 +1569,8 @@ public final class ConversationModel {
             isEdited: message.editDate > 0,
             status: status,
             albumId: message.mediaAlbumId.rawValue,
-            reactions: Self.reactions(message.interactionInfo)
+            reactions: Self.reactions(message.interactionInfo),
+            isPinned: message.isPinned
         )
     }
 

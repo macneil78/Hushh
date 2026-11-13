@@ -16,6 +16,9 @@ targets:
     platform: macOS
     sources:
       - path: App
+      # Copied into Application Scripts by Settings → AI → Set Up Codex.
+      - path: scripts/codex-bridge.sh
+        buildPhase: resources
     dependencies:
       - package: HushCore
         product: HushCore

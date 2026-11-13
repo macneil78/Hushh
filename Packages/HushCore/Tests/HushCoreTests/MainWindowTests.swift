@@ -155,7 +155,7 @@ struct MainWindowTests {
             ("About", AnyView(AboutSettings(model: model))),
             ("Account, logged out", AnyView(AccountSettings(model: AppModel(configuration: nil)))),
         ] {
-            let hosting = NSHostingView(rootView: view.frame(width: 500))
+            let hosting = NSHostingView(rootView: view.frame(width: 500).environment(Codex()))
             let height = hosting.fittingSize.height
             #expect(height <= SettingsView.height, "\(name) needs \(height) pt")
         }

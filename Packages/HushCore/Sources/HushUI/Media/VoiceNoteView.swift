@@ -168,35 +168,3 @@ struct RecordingBar: View {
         .padding(.top, 8)
     }
 }
-
-/// The reactions a chat allows, to pick from.
-struct ReactionPicker: View {
-    let choices: [String]
-    let chosen: Set<String>
-    let onPick: (String) -> Void
-
-    var body: some View {
-        if choices.isEmpty {
-            Text("Reactions are off in this chat.")
-                .foregroundStyle(.secondary)
-                .padding(14)
-        } else {
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 4), count: 8), spacing: 4) {
-                    ForEach(choices, id: \.self) { emoji in
-                        Button { onPick(emoji) } label: {
-                            Text(Emoji.colorful(emoji))
-                                .font(.title2)
-                                .frame(width: 34, height: 34)
-                                .background(chosen.contains(emoji) ? AnyShapeStyle(Color.accentColor.opacity(0.22)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 7))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(8)
-            }
-            .frame(width: 320, height: min(CGFloat((choices.count + 7) / 8) * 38 + 16, 240))
-        }
-    }
-}

@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import HushCore
 import SwiftUI
 
@@ -18,6 +19,7 @@ struct MessageRow: View {
     /// Swipe left to reply; nil where there's nothing to reply in.
     var swipe: SwipeToReply?
     @State private var isPickingReaction = false
+    @Environment(\.assistant) private var assistant
 
     var body: some View {
         if case .service(let text) = message.body {
@@ -40,6 +42,9 @@ struct MessageRow: View {
                 files: files,
                 swipe: swipe,
                 isHighlighted: isHighlighted,
+                isSelecting: conversation.selection != nil,
+                isSelected: conversation.selection?.contains(message.id) == true,
+                onToggleSelected: { conversation.toggleSelected([message.id]) },
                 onTapback: { isPickingReaction = true }
             ) {
                 MessageBubble(
@@ -59,17 +64,10 @@ struct MessageRow: View {
     }
 
     private var picker: some View {
-        ReactionPicker(
-            choices: conversation.reactionChoices,
-            chosen: Set(message.reactions.filter(\.isChosen).compactMap {
-                if case .emoji(let emoji) = $0.kind { return emoji }
-                return nil
-            }),
-            onPick: { emoji in
-                isPickingReaction = false
-                conversation.toggleReaction(emoji, on: message)
-            }
-        )
+        ReactionPicker(message: message, conversation: conversation, files: files) { kind in
+            isPickingReaction = false
+            conversation.toggleReaction(kind, on: message)
+        }
     }
 
     @ViewBuilder private var menu: some View {
@@ -80,13 +78,21 @@ struct MessageRow: View {
             Button("Try Again") { conversation.resend(message) }
         }
         Button("Reply") { conversation.reply(to: message) }
+        Button("Forward…") { conversation.forwarding = [message] }
         if conversation.canEdit(message) {
             Button("Edit") { conversation.startEditing(message) }
         }
-        if !message.plainText.isEmpty {
-            Button("Copy") {
+        if let copied = message.copyableText {
+            Button(message.plainText.isEmpty ? "Copy Transcript" : "Copy") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message.plainText, forType: .string)
+                NSPasteboard.general.setString(copied, forType: .string)
+            }
+        }
+        if let assistant, message.copyableText != nil {
+            if assistant.translations[message.id] != nil {
+                Button("Hide Translation") { assistant.hideTranslation(message.id) }
+            } else {
+                Button("Translate") { assistant.translate(message) }
             }
         }
         if message.isViewableMedia {
@@ -98,6 +104,9 @@ struct MessageRow: View {
             }
             Button("Save As…") { FileActions.saveAs(url, suggestedName: suggestedFileName(for: url)) }
         }
+        Divider()
+        Button(message.isPinned ? "Unpin" : "Pin") { conversation.setPinned(message, !message.isPinned) }
+        Button("Select") { conversation.startSelecting([message]) }
         Divider()
         Button("Delete…", role: .destructive) { conversation.requestDeletion(of: [message]) }
     }
@@ -148,6 +157,10 @@ struct MessageChrome<Bubble: View>: View {
     var revealsTime = false
     /// Just jumped to: the row flashes.
     var isHighlighted = false
+    /// Picking messages with Select: a check circle beside each, and a click picks it.
+    var isSelecting = false
+    var isSelected = false
+    var onToggleSelected: () -> Void = {}
     /// Opens the reaction picker.
     let onTapback: () -> Void
     @ViewBuilder let bubble: Bubble
@@ -166,6 +179,26 @@ struct MessageChrome<Bubble: View>: View {
     private var captionInset: CGFloat { (showsSender ? Self.avatarSlot : 0) + MessagesStyle.tailWidth + 6 }
 
     var body: some View {
+        if isSelecting {
+            HStack(spacing: 6) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(MessagesStyle.outgoing) : AnyShapeStyle(.tertiary))
+                    .frame(width: 26)
+                content
+            }
+            // A click anywhere on the row picks it, rather than opening what's in the bubble.
+            .overlay {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onToggleSelected)
+            }
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 3) {
             if showsSenderName {
                 Text(lead.sender.name)
@@ -204,7 +237,7 @@ struct MessageChrome<Bubble: View>: View {
                             let isOutgoing = isOutgoing
                             Group {
                                 if !reactions.isEmpty {
-                                    TapbackBadge(reactions: reactions, onTap: onTapback)
+                                    TapbackBadge(reactions: reactions, files: files, onTap: onTapback)
                                         .fixedSize()
                                 }
                             }
@@ -300,6 +333,8 @@ struct MessageBubble: View {
     var onPlayVoice: (URL) -> Void = { _ in }
 
     private var isOutgoing: Bool { message.isOutgoing }
+    @Environment(\.assistant) private var assistant
+    private var isTranslated: Bool { assistant?.translations[message.id] != nil }
     private var alignment: HorizontalAlignment { isOutgoing ? .trailing : .leading }
     /// Arabic or Hebrew text sits on the bubble's right side.
     private var contentAlignment: Alignment {
@@ -329,6 +364,9 @@ struct MessageBubble: View {
                 header
                 content
                     .frame(maxWidth: .infinity, alignment: contentAlignment)
+                if isTranslated {
+                    TranslationText(messageId: message.id, onAccent: isOutgoing)
+                }
             }
         }
     }
@@ -370,7 +408,12 @@ struct MessageBubble: View {
             media()
                 .padding(isOutgoing ? .trailing : .leading, MessagesStyle.tailWidth)
             if !caption.isEmpty {
-                bubble(hasTail: hasTail) { richText(caption) }
+                bubble(hasTail: hasTail) {
+                    richText(caption)
+                    if isTranslated {
+                        TranslationText(messageId: message.id, onAccent: isOutgoing)
+                    }
+                }
             }
         }
     }
@@ -480,6 +523,10 @@ struct BubbleLayout: Layout {
 struct RichTextView: View {
     let text: RichText
     let onAccent: Bool
+    /// Off in bubbles, as in Messages: selectable text puts an AppKit view over the words that
+    /// takes right-clicks for its own Cut / Copy / Paste menu, hiding the message's menu (Reply,
+    /// Forward, Select…), whose Copy copies the whole message.
+    var isSelectable = false
     @State private var revealsSpoilers = false
     @State private var linkToConfirm: URL?
 
@@ -505,17 +552,21 @@ struct RichTextView: View {
         let view = Text(AttributedString(text, onAccent: onAccent, revealsSpoilers: revealsSpoilers))
             .multilineTextAlignment(text.isRightToLeft ? .trailing : .leading)
         if text.hasSpoilers && !revealsSpoilers {
-            // Selectable text takes every click for itself, so it only becomes selectable once
-            // you've clicked to reveal the spoiler.
             view
                 .contentShape(Rectangle())
                 .onTapGesture { revealsSpoilers = true }
                 .help("Click to reveal")
         } else if case let destinations = text.hiddenLinkDestinations, !destinations.isEmpty {
+            let addresses = destinations.map(\.absoluteString).joined(separator: "\n")
+            if isSelectable {
+                view.textSelection(.enabled).help(addresses)
+            } else {
+                view.help(addresses)
+            }
+        } else if isSelectable {
             view.textSelection(.enabled)
-                .help(destinations.map(\.absoluteString).joined(separator: "\n"))
         } else {
-            view.textSelection(.enabled)
+            view
         }
     }
 }

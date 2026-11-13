@@ -33,23 +33,19 @@ struct AlbumRow: View {
             files: files,
             swipe: swipe,
             isHighlighted: isHighlighted,
+            isSelecting: conversation.selection != nil,
+            isSelected: messages.allSatisfy { conversation.selection?.contains($0.id) == true },
+            onToggleSelected: { conversation.toggleSelected(messages.map(\.id)) },
             onTapback: { isPickingReaction = true }
         ) {
             AlbumBubble(messages: messages, hasTail: isLastInGroup, files: files, conversation: conversation)
                 .help(lead.date.formatted(date: .abbreviated, time: .shortened))
                 .contextMenu { menu }
                 .popover(isPresented: $isPickingReaction) {
-                    ReactionPicker(
-                        choices: conversation.reactionChoices,
-                        chosen: Set(lead.reactions.filter(\.isChosen).compactMap {
-                            if case .emoji(let emoji) = $0.kind { return emoji }
-                            return nil
-                        }),
-                        onPick: { emoji in
-                            isPickingReaction = false
-                            conversation.toggleReaction(emoji, on: lead)
-                        }
-                    )
+                    ReactionPicker(message: lead, conversation: conversation, files: files) { kind in
+                        isPickingReaction = false
+                        conversation.toggleReaction(kind, on: lead)
+                    }
                 }
         }
     }
@@ -59,12 +55,16 @@ struct AlbumRow: View {
             Button("Tapback…") { isPickingReaction = true }
         }
         Button("Reply") { conversation.reply(to: lead) }
+        Button("Forward…") { conversation.forwarding = messages }
         if let caption = messages.lazy.compactMap(\.caption).first(where: { !$0.isEmpty }) {
             Button("Copy Caption") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(caption.text, forType: .string)
             }
         }
+        Divider()
+        Button(lead.isPinned ? "Unpin" : "Pin") { conversation.setPinned(lead, !lead.isPinned) }
+        Button("Select") { conversation.startSelecting(messages) }
         Divider()
         Button("Delete All \(messages.count) Items…", role: .destructive) {
             conversation.requestDeletion(of: messages)

@@ -1,5 +1,6 @@
 import AVKit
 import AppKit
+import UniformTypeIdentifiers
 import HushCore
 import SwiftUI
 
@@ -29,7 +30,7 @@ struct MediaViewer: View {
                 topBar
                 Spacer()
                 if let caption = message.caption, !caption.isEmpty {
-                    RichTextView(text: caption, onAccent: true)
+                    RichTextView(text: caption, onAccent: true, isSelectable: true)
                         .foregroundStyle(.white)
                         .padding(12)
                         .frame(maxWidth: 640)
@@ -218,7 +219,7 @@ struct ViewerVideo: View {
                 } else {
                     PlayerView(player: player)
                         .task(id: url) {
-                            let player = AVPlayer(url: url)
+                            let player = AVPlayer(playerItem: AVPlayerItem(asset: PlayableFile.asset(at: url)))
                             self.player = player
                             player.play()
                         }
@@ -236,6 +237,19 @@ struct ViewerVideo: View {
         // Also when a file is already known: one deleted from disk is then fetched again
         // rather than played as a black, silent player.
         .task(id: video.fileId) { files.download(video.fileId, priority: 32) }
+    }
+}
+
+/// AVFoundation tells a file's format by its extension, and TDLib keeps the name a video was sent
+/// with: one sent as plain "mp4" wouldn't open at all ("Cannot Open"). Telegram's videos are MP4,
+/// so a file without a known video extension is opened as one.
+enum PlayableFile {
+    static func asset(at url: URL) -> AVURLAsset {
+        needsTypeHint(url) ? AVURLAsset(url: url, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"]) : AVURLAsset(url: url)
+    }
+
+    static func needsTypeHint(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .audiovisualContent) != true
     }
 }
 

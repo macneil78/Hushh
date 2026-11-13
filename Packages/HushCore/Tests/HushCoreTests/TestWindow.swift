@@ -1,4 +1,5 @@
 import AppKit
+import HushAI
 import SwiftUI
 
 /// Windows for view tests that nobody sees: borderless, far off screen, transparent, never key
@@ -30,10 +31,10 @@ enum TestWindow {
     }
 
     /// `view` in a window behind every other one. Let it settle before reading it, and close it
-    /// with `close(_:)` in a defer.
+    /// with `close(_:)` in a defer. Like the app, it provides the Codex helper to the views.
     static func host(_ view: some View, width: CGFloat, height: CGFloat) -> NSWindow {
         let window = make(width: width, height: height)
-        window.contentView = NSHostingView(rootView: view)
+        window.contentView = NSHostingView(rootView: view.environment(Codex()))
         window.setContentSize(NSSize(width: width, height: height))
         window.orderBack(nil)
         return window

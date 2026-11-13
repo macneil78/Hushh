@@ -44,6 +44,15 @@ struct ChatListView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             if window.showsArchive { archiveHeader }
         }
+        .alert(
+            "Couldn't Change the Chat",
+            isPresented: Binding(get: { chats.actionError != nil }, set: { if !$0 { chats.actionError = nil } }),
+            presenting: chats.actionError
+        ) { _ in
+            Button("OK") {}
+        } message: { error in
+            Text(error)
+        }
     }
 
     /// Dropped straight onto a chat: open it with the files attached, ready for a caption.
@@ -156,6 +165,25 @@ struct ChatContextMenu: View {
             Button("Mark as Read") { chats.markAsRead(item) }
         } else {
             Button("Mark as Unread") { chats.markAsUnread(item) }
+        }
+        Divider()
+        let list: ChatListKind = window.showsArchive ? .archive : .main
+        if item.isPinned(in: list) {
+            Button("Unpin") { chats.setPinned(false, item) }
+        } else {
+            Button("Pin") { chats.setPinned(true, item) }
+        }
+        if item.kind != .savedMessages {
+            if item.isMuted {
+                Button("Unmute") { chats.setMuted(item, for: nil) }
+            } else {
+                Menu("Mute") {
+                    Button("For 1 Hour") { chats.setMuted(item, for: 3_600) }
+                    Button("For 8 Hours") { chats.setMuted(item, for: 28_800) }
+                    Button("For 2 Days") { chats.setMuted(item, for: 172_800) }
+                    Button("Forever") { chats.setMuted(item, for: .max) }
+                }
+            }
         }
         Divider()
         if item.kind != .savedMessages {

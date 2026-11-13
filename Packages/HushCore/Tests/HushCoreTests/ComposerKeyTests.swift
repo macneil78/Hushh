@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Foundation
+import HushAI
 import SwiftUI
 import Testing
 @preconcurrency import TDLibKit
@@ -110,7 +111,7 @@ private final class ComposerHost {
         window = TestWindow.make(width: 520, height: 260)
         let view = ComposerView(conversation: conversation, stickers: StickerLibrary(), files: FileStore(), onClose: { [unowned self] in closed += 1 })
             .frame(width: 520)
-        window.contentView = NSHostingView(rootView: view)
+        window.contentView = NSHostingView(rootView: view.environment(Codex()))
         TestWindow.run(for: 0.15)
         textView = TestWindow.views(ComposerNSTextView.self, in: window.contentView!).first
         window.makeFirstResponder(textView)
