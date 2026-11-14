@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 /// OpenAI's Codex, signed in with your ChatGPT account, for Catch Up, Draft a Reply, Polish and
 /// Translate. Hushh runs in the app sandbox and can't start Codex itself, so it goes through a
 /// small script in its Application Scripts folder, which macOS runs for it outside the sandbox
-/// (scripts/codex-bridge.sh). Nothing is sent unless you ask for one of those.
+/// (scripts/codex-bridge.sh). Opening a chat starts Codex in the background, connected to
+/// OpenAI (`prepare()`), but nothing from your chats is sent unless you ask for one of those.
 @MainActor @Observable
 public final class Codex {
     public enum Setup: Equatable, Sendable {
@@ -48,7 +49,11 @@ public final class Codex {
     private static let modelKey = "HushhCodexModel"
 
     public var model: Model {
-        didSet { UserDefaults.standard.set(model.rawValue, forKey: Self.modelKey) }
+        didSet {
+            UserDefaults.standard.set(model.rawValue, forKey: Self.modelKey)
+            // Started for the other model.
+            closeSpareSession()
+        }
     }
     /// Photos are shrunk to this many pixels on the long side: enough to see what's in them, at
     /// about a thousand tokens each.
@@ -95,10 +100,12 @@ public final class Codex {
     public func refresh() {
         guard let installed = Self.installedScript, let current = try? Data(contentsOf: installed) else {
             setup = .missing
+            closeSpareSession()
             return
         }
         let shipped = Self.bundledScript.flatMap { try? Data(contentsOf: $0) }
         setup = shipped == nil || shipped == current ? .ready : .outdated
+        if setup != .ready { closeSpareSession() }
     }
 
     /// Writes the bridge where you chose in the save panel, which macOS lets the sandboxed app do.
@@ -109,9 +116,13 @@ public final class Codex {
         refresh()
     }
 
-    /// Asks Codex and returns its answer, showing it the photos too. Takes a few seconds: Codex
-    /// starts up for each request.
-    public func ask(_ prompt: String, effort: Effort, photos: [URL] = []) async throws -> String {
+    /// Asks Codex and returns its answer, showing it the photos too. While Codex writes,
+    /// `onText` gets the answer so far, a few words at a time. Goes through the session
+    /// `prepare()` started when there is one, which saves Codex's start-up and connection.
+    public func ask(
+        _ prompt: String, effort: Effort, photos: [URL] = [],
+        onText: (@MainActor (String) -> Void)? = nil
+    ) async throws -> String {
         guard let script = Self.installedScript, FileManager.default.fileExists(atPath: script.path) else {
             refresh()
             throw Failure.notSetUp
@@ -124,16 +135,84 @@ public final class Codex {
         let output = folder.appending(path: "answer.txt")
         let errors = folder.appending(path: "errors.txt")
         try prompt.write(to: input, atomically: true, encoding: .utf8)
-
         let shrunk = await Task.detached { Self.shrink(photos, into: folder) }.value
-        let arguments = [input.path, output.path, errors.path, effort.rawValue, model.rawValue] + shrunk.map(\.path)
-        let launchError = try await Self.run(script, arguments: arguments)
+
+        let soFar = AnswerSoFar()
+        let failure: String?
+        if setup == .ready {
+            let session = try takeSession(script)
+            let request = try JSONSerialization.data(withJSONObject: [
+                "prompt": input.path, "answer": output.path, "errors": errors.path,
+                "effort": effort.rawValue, "images": shrunk.map(\.path),
+            ])
+            failure = await session.run(request) { item, delta in onText?(soFar.add(item, delta)) }
+            keep(session)
+        } else {
+            // A bridge from an older Hushh: one request per run.
+            let arguments = [input.path, output.path, errors.path, effort.rawValue, model.rawValue] + shrunk.map(\.path)
+            failure = try await Self.runOnce(script, arguments: arguments) { item, delta in onText?(soFar.add(item, delta)) }
+        }
         let answer = (try? String(contentsOf: output, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !answer.isEmpty else {
             let log = (try? String(contentsOf: errors, encoding: .utf8)) ?? ""
-            throw Failure.failed(log.isEmpty && launchError != nil ? launchError!.localizedDescription : Self.reason(fromLog: log))
+            throw Failure.failed(log.isEmpty ? failure ?? Self.reason(fromLog: "") : Self.reason(fromLog: log))
         }
         return answer
+    }
+
+    /// The answer as it comes in, piece by piece.
+    @MainActor private final class AnswerSoFar {
+        private var text = ""
+        private var item = ""
+
+        func add(_ item: String, _ delta: String) -> String {
+            // A new message (Codex can write more than one): the last one is the answer.
+            if item != self.item {
+                self.item = item
+                text = ""
+            }
+            text += delta
+            return text
+        }
+    }
+
+    // MARK: Sessions
+
+    /// A session started ahead of the next request, already connected. At most one.
+    @ObservationIgnored private var spareSession: CodexSession?
+
+    /// Starts Codex in the background, so the next request skips its start-up: for when a chat
+    /// opens. Codex connects to OpenAI, but nothing from your chats is sent until you ask.
+    public func prepare() {
+        guard setup == .ready, let script = Self.installedScript else { return }
+        if let spare = spareSession, spare.isIdle, spare.model == model { return }
+        spareSession?.close()
+        spareSession = try? CodexSession(script: script, model: model)
+    }
+
+    /// The spare session if it's ready, else a new one.
+    private func takeSession(_ script: URL) throws -> CodexSession {
+        if let spare = spareSession {
+            spareSession = nil
+            if spare.isIdle, spare.model == model { return spare }
+            spare.close()
+        }
+        return try CodexSession(script: script, model: model)
+    }
+
+    /// After a request, the session (which already started a fresh chat) is the next spare,
+    /// unless there is one.
+    private func keep(_ session: CodexSession) {
+        if session.isIdle, session.model == model, spareSession == nil {
+            spareSession = session
+        } else {
+            session.close()
+        }
+    }
+
+    private func closeSpareSession() {
+        spareSession?.close()
+        spareSession = nil
     }
 
     /// Small JPEG copies of the photos, in the request's folder, in order. Unreadable ones are
@@ -154,15 +233,53 @@ public final class Codex {
         }
     }
 
-    /// Runs the script to the end. A failing Codex exits non-zero, which macOS reports as an
-    /// error; its log says why, so the answer file decides whether it worked.
-    private nonisolated static func run(_ script: URL, arguments: [String]) async throws -> (any Error)? {
+    /// Runs the script once, to the end, passing on the pieces of the answer as they come.
+    /// Returns why macOS couldn't run it, if so: a failing Codex exits non-zero, which macOS
+    /// reports as an error, so the answer file decides whether it worked.
+    private static func runOnce(_ script: URL, arguments: [String], onPiece: @escaping @MainActor (String, String) -> Void) async throws -> String? {
+        let pipe = Pipe()
+        let reader = Task { @MainActor in
+            for try await line in pipe.fileHandleForReading.bytes.lines {
+                if let piece = piece(in: line) { onPiece(piece.item, piece.delta) }
+            }
+        }
+        let launchError: (any Error)?
+        do {
+            launchError = try await execute(script, arguments: arguments, output: pipe.fileHandleForWriting)
+        } catch {
+            try? pipe.fileHandleForWriting.close()
+            throw error
+        }
+        // The script is done: closing the last writer ends the reader once it has read everything.
+        try? pipe.fileHandleForWriting.close()
+        _ = await reader.result
+        return launchError?.localizedDescription
+    }
+
+    private nonisolated static func execute(_ script: URL, arguments: [String], output: FileHandle) async throws -> (any Error)? {
         let task = try NSUserUnixTask(url: script)
+        task.standardOutput = output
         return await withCheckedContinuation { (continuation: CheckedContinuation<(any Error)?, Never>) in
             task.execute(withArguments: arguments) { error in
                 continuation.resume(returning: error)
             }
         }
+    }
+
+    /// One piece of the answer, from a line the script passed on from Codex's app server:
+    /// `{"method":"item/agentMessage/delta","params":{"delta":"…","itemId":"…",…}}`.
+    nonisolated static func piece(in line: String) -> (item: String, delta: String)? {
+        struct Line: Decodable {
+            struct Params: Decodable {
+                let delta: String
+                let itemId: String
+            }
+            let method: String
+            let params: Params
+        }
+        guard let decoded = try? JSONDecoder().decode(Line.self, from: Data(line.utf8)),
+              decoded.method == "item/agentMessage/delta" else { return nil }
+        return (decoded.params.itemId, decoded.params.delta)
     }
 
     /// Codex's log ends with what went wrong, sometimes as JSON from the API.

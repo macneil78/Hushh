@@ -126,15 +126,26 @@ ChatGPT account (`codex login`), Hushh can help with writing and reading:
   while it catches you up or drafts, so it knows who you're talking to. It's encrypted with the
   search indexes. Read, edit or clear it in Chat Info, or turn it off in Settings → AI.
 
+Answers appear as Codex writes them: the summary and translations fill in word by word, and a
+draft types itself into the message box. Typing there yourself stops it and keeps your text.
+
 What leaves your Mac: only when you click one of these, Hushh sends Codex the messages that request
 needs (the unread ones, the recent conversation with up to 4–6 recent photos shrunk to 768 px, or
-the one message to translate), plus that chat's note. Codex sends them to OpenAI. Each request
-counts toward your ChatGPT plan's Codex limits, roughly 10–15k tokens, and takes a few seconds.
-It uses GPT-6.1 Sol by default; Settings → AI switches to GPT-6 Luna.
+the one message to translate), plus that chat's note. Codex sends them to OpenAI. To answer
+sooner, Codex starts in the background when you open a chat and connects to OpenAI then, but
+nothing from your chats goes with it until you click; it stops after 20 idle minutes. Each request
+counts toward your ChatGPT plan's Codex limits, roughly 6–12k tokens (about 9k for a Catch Up of
+150 messages), and takes a few seconds. It uses GPT-6.1 Sol by default; Settings → AI switches
+to GPT-6 Luna.
 
 Hushh runs in the macOS app sandbox and can't start other programs. It reaches Codex through
 [`scripts/codex-bridge.sh`](scripts/codex-bridge.sh), which macOS runs for it from
-`~/Library/Application Scripts/com.macneil.Hush` outside the sandbox. `scripts/install.sh`
+`~/Library/Application Scripts/com.macneil.Hush` outside the sandbox. The script talks to
+Codex's app server (`codex app-server`, using the `jq` that comes with macOS) and sets the
+read-only sandbox and the throwaway session itself, whatever Hushh asks. It also gives Codex
+short instructions for chat instead of its coding ones, and turns off its tools (web search,
+plugins, apps, your MCP servers), which a chat request doesn't need: that halves each request.
+`scripts/install.sh`
 (Release build into /Applications) copies it there; for a build from Xcode, use Settings → AI →
 Set Up…. Without the script, Hushh shows none of these buttons.
 
@@ -142,9 +153,9 @@ Set Up…. Without the script, Hushh shows none of these buttons.
 
 - All code lives in `Packages/HushCore`:
   - `HushCore`: the TDLib session, login, and the chat filter (`VisibilityPolicy`).
-  - `HushAI`: search by meaning, and the Codex features (`Codex`, `ChatAssistant`, `ChatMemory`).
+  - `HushAI`: search by meaning (the model, its download and the search indexes), and the Codex
+    features (`Codex`, `CodexSession`, `ChatAssistant`, `ChatMemory`).
   - `HushUI`: the SwiftUI views.
-  - `HushAI`: search by meaning (the model, its download and the search indexes).
   - The Xcode app target only contains `App/HushApp.swift`.
 - `project.yml` defines the Xcode project. After editing it, run `xcodegen generate`. `Hush.xcodeproj`, `App/Info.plist` and `App/Hush.entitlements` are generated.
 - To build and test without the app, run `cd Packages/HushCore && swift build && swift test`.

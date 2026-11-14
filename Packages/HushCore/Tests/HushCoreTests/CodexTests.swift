@@ -94,4 +94,30 @@ struct CodexTests {
         #expect(Codex.reason(fromLog: "Not logged in. Please run codex login") == "Codex isn't signed in. Run “codex login” in Terminal.")
         #expect(Codex.reason(fromLog: "") == "Codex didn't answer.")
     }
+
+    @Test func piecesOfTheAnswerAreReadFromTheScript() {
+        let line = #"{"method":"item/agentMessage/delta","params":{"delta":"Hi \"you\"\n","itemId":"item_0","threadId":"t","turnId":"u"}}"#
+        let piece = Codex.piece(in: line)
+        #expect(piece?.item == "item_0")
+        #expect(piece?.delta == "Hi \"you\"\n")
+        #expect(Codex.piece(in: #"{"method":"item/reasoning/textDelta","params":{"delta":"x","itemId":"r"}}"#) == nil)
+        #expect(Codex.piece(in: "not json") == nil)
+    }
+
+    @Test func theMemoryNoteStaysHiddenWhileCodexWrites() {
+        // Its marker arriving a few characters at a time.
+        #expect(ChatAssistant.visibleWhileWriting("• Dinner at 8\n=") == "• Dinner at 8")
+        #expect(ChatAssistant.visibleWhileWriting("• Dinner at 8\n=== MEM") == "• Dinner at 8")
+        #expect(ChatAssistant.visibleWhileWriting("• Dinner at 8\n=== MEMORY ===\n- likes") == "• Dinner at 8")
+        // A line that only starts like it, once it turns out to be something else, shows.
+        #expect(ChatAssistant.visibleWhileWriting("Score\n== 3") == "Score\n== 3")
+        #expect(ChatAssistant.visibleWhileWriting("  Sure, see you ") == "Sure, see you")
+    }
+
+    @Test func workInProgressIsWorkingOrWriting() {
+        #expect(ChatAssistant.Work.working.isInProgress)
+        #expect(ChatAssistant.Work.writing("Hi").isInProgress)
+        #expect(!ChatAssistant.Work.done("Hi").isInProgress)
+        #expect(!ChatAssistant.Work.failed("No").isInProgress)
+    }
 }

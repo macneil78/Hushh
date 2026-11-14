@@ -8,9 +8,19 @@ import Observation
 @MainActor @Observable
 public final class ChatAssistant {
     public enum Work: Equatable, Sendable {
+        /// Asked; nothing written yet.
         case working
+        /// Codex is writing: the text so far.
+        case writing(String)
         case done(String)
         case failed(String)
+
+        public var isInProgress: Bool {
+            switch self {
+            case .working, .writing: true
+            case .done, .failed: false
+            }
+        }
     }
 
     /// Ways to rewrite the message box's text.
@@ -41,6 +51,9 @@ public final class ChatAssistant {
     private var replacedText: String?
     /// What Codex put in the message box.
     private var writtenText: String?
+    /// While Codex writes in the message box: what it last put there. Once the box holds
+    /// something else, you typed, and Codex stops writing in it.
+    @ObservationIgnored private var streamedText: String?
 
     @ObservationIgnored private let conversation: ConversationModel
     @ObservationIgnored private let codex: Codex
@@ -86,7 +99,7 @@ public final class ChatAssistant {
 
     /// Sums up the unread messages, or, with nothing unread, the latest stretch of the chat.
     public func catchUp() {
-        guard summary != .working else { return }
+        guard summary?.isInProgress != true else { return }
         let (messages, unread) = Self.messagesToSummarize(conversation.messages, firstUnreadId: conversation.firstUnreadMessageId)
         guard !messages.isEmpty else {
             summary = .failed("There's nothing here to sum up yet.")
@@ -101,9 +114,16 @@ public final class ChatAssistant {
                 unreadCount: unread, photoCount: photos.urls.count, memory: currentMemory
             )
             do {
-                summary = .done(keepingMemory(try await codex.ask(prompt, effort: .low, photos: photos.urls)))
+                let answer = try await codex.ask(prompt, effort: .low, photos: photos.urls) { [self] text in
+                    // Closed meanwhile: it stays closed.
+                    guard summary?.isInProgress == true else { return }
+                    let shown = Self.visibleWhileWriting(text)
+                    if !shown.isEmpty { summary = .writing(shown) }
+                }
+                let text = keepingMemory(answer)
+                if summary != nil { summary = .done(text) }
             } catch {
-                summary = .failed(error.localizedDescription)
+                if summary != nil { summary = .failed(error.localizedDescription) }
             }
         }
     }
@@ -177,22 +197,36 @@ public final class ChatAssistant {
         replacedText != nil && writtenText == conversation.composerText
     }
 
+    /// Codex writes in the message box as it goes, like someone typing, until you type yourself.
     private func write(_ request: @escaping @MainActor () async -> (prompt: String, photos: [URL])) {
         guard !isWriting else { return }
         isWriting = true
         let before = conversation.composerText
+        streamedText = before
         Task {
-            defer { isWriting = false }
+            defer {
+                isWriting = false
+                streamedText = nil
+            }
             do {
                 let (prompt, photos) = await request()
-                let text = keepingMemory(try await codex.ask(prompt, effort: .low, photos: photos))
+                let answer = try await codex.ask(prompt, effort: .low, photos: photos) { [self] text in
+                    guard conversation.composerText == streamedText else { return }
+                    let shown = Self.visibleWhileWriting(text)
+                    guard !shown.isEmpty else { return }
+                    conversation.composerText = shown
+                    streamedText = shown
+                }
+                let text = keepingMemory(answer)
                 // Typed something meanwhile: that wins.
-                guard conversation.composerText == before else { return }
+                guard conversation.composerText == streamedText else { return }
                 replacedText = before
                 writtenText = text
                 conversation.composerText = text
                 conversation.requestFocus()
             } catch {
+                // Half an answer is no use: put back what was there, unless you typed since.
+                if conversation.composerText == streamedText { conversation.composerText = before }
                 conversation.errorMessage = error.localizedDescription
             }
         }
@@ -206,14 +240,21 @@ public final class ChatAssistant {
 
     /// Translates a message into the Mac's language, shown under it.
     public func translate(_ message: MessageModel) {
-        guard let text = message.copyableText, translations[message.id] != .working else { return }
-        translations[message.id] = .working
+        guard let text = message.copyableText, translations[message.id]?.isInProgress != true else { return }
+        let id = message.id
+        translations[id] = .working
         let prompt = Self.translatePrompt(text, into: Self.languages.first?.englishName ?? "English")
         Task {
             do {
-                translations[message.id] = .done(try await codex.ask(prompt, effort: .low))
+                let answer = try await codex.ask(prompt, effort: .low) { [self] text in
+                    // Hidden meanwhile: it stays hidden.
+                    guard translations[id]?.isInProgress == true else { return }
+                    let shown = Self.visibleWhileWriting(text)
+                    if !shown.isEmpty { translations[id] = .writing(shown) }
+                }
+                if translations[id] != nil { translations[id] = .done(answer) }
             } catch {
-                translations[message.id] = .failed(error.localizedDescription)
+                if translations[id] != nil { translations[id] = .failed(error.localizedDescription) }
             }
         }
     }
@@ -308,6 +349,20 @@ public final class ChatAssistant {
         let text = lines[..<index].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         let memory = lines[(index + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         return (text, memory)
+    }
+
+    /// The answer so far, as shown while Codex writes: without the memory part, even while its
+    /// marker line is still coming in ("=== MEM"), and without spaces at either end.
+    nonisolated static func visibleWhileWriting(_ text: String) -> String {
+        func key(_ line: String) -> String { line.replacingOccurrences(of: " ", with: "").uppercased() }
+        let marker = key(memoryMarker)
+        var lines = text.components(separatedBy: "\n")
+        if let index = lines.firstIndex(where: { key($0).hasPrefix(marker) }) {
+            lines.removeSubrange(index...)
+        } else if let last = lines.last, !key(last).isEmpty, marker.hasPrefix(key(last)) {
+            lines.removeLast()
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated static func summaryPrompt(chatTitle: String, transcript: String, unreadCount: Int, photoCount: Int = 0, memory: String? = nil) -> String {

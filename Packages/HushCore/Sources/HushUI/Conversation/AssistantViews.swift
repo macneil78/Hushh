@@ -20,6 +20,11 @@ struct SummaryCard: View {
                 Label("Catch Up", systemImage: "sparkles")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if case .writing = work {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .help("Codex is writing…")
+                }
                 Spacer()
                 if case .done(let text) = work {
                     Button("Copy", systemImage: "doc.on.doc") {
@@ -40,7 +45,7 @@ struct SummaryCard: View {
                     Text("Codex is reading the chat…")
                         .foregroundStyle(.secondary)
                 }
-            case .done(let text):
+            case .writing(let text), .done(let text):
                 ScrollView {
                     Text(text)
                         .textSelection(.enabled)
@@ -87,7 +92,7 @@ struct TranslationText: View {
                     }
                     .font(.callout)
                     .opacity(0.7)
-                case .done(let text):
+                case .writing(let text), .done(let text):
                     Text(text)
                         .fixedSize(horizontal: false, vertical: true)
                 case .failed(let reason):

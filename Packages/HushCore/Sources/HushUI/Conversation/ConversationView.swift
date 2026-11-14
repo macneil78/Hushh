@@ -109,7 +109,7 @@ struct ConversationView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Catch Up", systemImage: "sparkles", action: assistant.catchUp)
                         .help("Catch up: what you missed in this chat, summed up by Codex")
-                        .disabled(assistant.summary == .working)
+                        .disabled(assistant.summary?.isInProgress == true)
                 }
             }
         }
@@ -118,6 +118,9 @@ struct ConversationView: View {
                 assistant = ChatAssistant(conversation: conversation, codex: codex, files: files, vault: vault, chatTitle: chat.displayTitle)
             }
         }
+        // Codex starts in the background as a chat opens, so Catch Up or a draft starts faster.
+        // Nothing from the chat is sent until you ask.
+        .task(id: conversation.chatId) { codex.prepare() }
         .sheet(isPresented: Binding(
             get: { conversation.forwarding != nil },
             set: { if !$0 { conversation.forwarding = nil } }
